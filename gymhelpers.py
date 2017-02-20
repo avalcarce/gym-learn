@@ -5,10 +5,10 @@ import time
 import matplotlib.pyplot as plt
 from textwrap import wrap
 
-from utils import *
-from agents import AgentEpsGreedy
-from valuefunctions import ValueFunctionDQN
-from ReplayMemory import ReplayMemory
+from .utils import *
+from .agents import AgentEpsGreedy
+from .valuefunctions import ValueFunctionDQN
+from .ReplayMemory import ReplayMemory
 
 
 class ExperimentsManager:
@@ -16,7 +16,7 @@ class ExperimentsManager:
                  figures_dir=None, discount=0.99, decay_eps=0.995, eps_min=0.0001, learning_rate=1E-4, decay_lr=False,
                  max_step=10000, replay_memory_max_size=100000, ep_verbose=False, exp_verbose=True, batch_size=64,
                  upload_last_exp=False, double_dqn=False, target_params_update_period_steps=1, gym_api_key="",
-                 checkpoints_dir=None):
+                 checkpoints_dir=None, min_avg_rwd=-110):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
         self.gym_stats_dir = None
@@ -51,7 +51,7 @@ class ExperimentsManager:
         self.exp = 0
         self.step_durations_s = np.zeros(shape=self.max_step, dtype=float)
 
-        self.min_avg_rwd = -110     # Minimum average reward to consider the problem as solved
+        self.min_avg_rwd = min_avg_rwd     # Minimum average reward to consider the problem as solved
         self.n_avg_ep = 100         # Number of consecutive episodes to calculate the average reward
 
         self.conf_msg = "\nEXECUTING EXPERIMENT {} OF {} IN ENVIRONMENT {}."
