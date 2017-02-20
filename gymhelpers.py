@@ -238,15 +238,16 @@ class ExperimentsManager:
                                                  n_ep, self.target_params_update_period_steps)
 
     def __create_figures_directory(self):
-        self.figures_dir = os.path.join(self.figures_dir, self.env_name, self.exps_conf_str)
-        if not os.path.exists(self.figures_dir):
-            os.makedirs(self.figures_dir)
-        else:
-            for dirpath, dirnames, files in os.walk(self.figures_dir):
-                if files:
-                    raise FileExistsError("The figures directory exists and has files: {}".format(self.figures_dir))
-                else:
-                    break
+        if self.figures_dir is not None:
+            self.figures_dir = os.path.join(self.figures_dir, self.env_name, self.exps_conf_str)
+            if not os.path.exists(self.figures_dir):
+                os.makedirs(self.figures_dir)
+            else:
+                for dirpath, dirnames, files in os.walk(self.figures_dir):
+                    if files:
+                        raise FileExistsError("The figures directory exists and has files: {}".format(self.figures_dir))
+                    else:
+                        break
 
     def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True):
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
@@ -327,33 +328,7 @@ class ExperimentsManager:
         n_ep = self.Rwd_per_ep_v.shape[1]
         eps = range(n_ep)
 
-        # PLOT ALL EXPERIMENTS
-        fig = plt.figure()
-        for i in range(n_exps):
-            plt.plot(eps, self.Avg_Rwd_per_ep[i, :], label="Exp {}".format(i))
-        plt.ylim([-self.max_step - 10, -70])
-        plt.xlabel("Episode number")
-        plt.ylabel("Reward")
-        plt.grid(True)
-        plt.legend(loc='upper left')
-
-        ttl = "Average reward. " + self.exps_conf_str
-        plt.title("\n".join(wrap(ttl, 60)))
-
-        if self.figures_dir is not None:
-            fig_savepath = os.path.join(self.figures_dir, "RwdsComparisonsAcrossExps.png")
-            plt.savefig(fig_savepath)
-        plt.close(fig)
-
-        # PLOT AVERAGE OVER ALL EXPERIMENTS
         rwd_exps_avg = np.mean(self.Rwd_per_ep_v, axis=0)  # Rwd averaged over all experiments
-        fig = plt.figure()
-        plt.subplot(211)
-        plt.plot(eps, rwd_exps_avg, label="Average over {:3d} experiments".format(n_exps))
-        plt.ylim([-self.max_step - 10, -70])
-        plt.ylabel("Reward per episode")
-        plt.grid(True)
-
         rwd_exps_avg_ma = np.zeros(rwd_exps_avg.shape[0])
         rwd_exps_avg_movstd = np.zeros(rwd_exps_avg.shape[0])
         rwd_exps_avg_percentile5 = np.zeros(rwd_exps_avg.shape[0])
@@ -363,95 +338,125 @@ class ExperimentsManager:
             rwd_exps_avg_movstd[s] = np.std(rwd_exps_avg[max(0, s - 99):s + 1])
             rwd_exps_avg_percentile5[s] = np.percentile(rwd_exps_avg[max(0, s - 99):s + 1], 5)
             rwd_exps_avg_percentile95[s] = np.percentile(rwd_exps_avg[max(0, s - 99):s + 1], 95)
-        plt.plot(eps, rwd_exps_avg_percentile95, label="95th percentile over 100 episodes")
-        plt.plot(eps, rwd_exps_avg_ma, label="100-episode moving average")
-        plt.plot(eps, rwd_exps_avg_percentile5, label="5th percentile over 100 episodes")
-        plt.legend(loc='lower right')
-        print("Average final reward: {:3.2f} (std={:3.2f}).".format(rwd_exps_avg_ma[-1], rwd_exps_avg_movstd[-1]))
-        plt.title("Final average reward: {:3.2f} (std={:3.2f})".format(rwd_exps_avg_ma[-1], rwd_exps_avg_movstd[-1]))
-
-        loss_exps_avg = np.mean(self.Loss_per_ep_v, axis=0)
-        plt.subplot(212)
-        plt.semilogy(eps, loss_exps_avg, label="Average over {:3d} experiments".format(n_exps))
-        plt.xlabel("Episode number")
-        plt.ylabel("Loss per episode")
-        plt.grid(True)
-
-        loss_exps_avg_ma = np.zeros(loss_exps_avg.shape[0])
-        for s in range(loss_exps_avg.shape[0]):
-            loss_exps_avg_ma[s] = np.mean(loss_exps_avg[max(0, s - 100):s + 1])
-        plt.plot(eps, loss_exps_avg_ma, label="100-episode moving average")
-        plt.legend(loc='lower right')
-
-        plt.suptitle("\n".join(wrap(self.exps_conf_str, 60)))
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.85)
 
         if self.figures_dir is not None:
-            fig_savepath = os.path.join(self.figures_dir, "ExpsAverage.png")
-            plt.savefig(fig_savepath)
-        plt.close(fig)
+            # PLOT ALL EXPERIMENTS
+            fig = plt.figure()
+            for i in range(n_exps):
+                plt.plot(eps, self.Avg_Rwd_per_ep[i, :], label="Exp {}".format(i))
+            # plt.ylim([-self.max_step - 10, -70])
+            plt.xlabel("Episode number")
+            plt.ylabel("Reward")
+            plt.grid(True)
+            plt.legend(loc='upper left')
+
+            ttl = "Average reward. " + self.exps_conf_str
+            plt.title("\n".join(wrap(ttl, 60)))
+
+            if self.figures_dir is not None:
+                fig_savepath = os.path.join(self.figures_dir, "RwdsComparisonsAcrossExps.png")
+                plt.savefig(fig_savepath)
+            plt.close(fig)
+
+            # PLOT AVERAGE OVER ALL EXPERIMENTS
+            fig = plt.figure()
+            plt.subplot(211)
+            plt.plot(eps, rwd_exps_avg, label="Average over {:3d} experiments".format(n_exps))
+            # plt.ylim([-self.max_step - 10, -70])
+            plt.ylabel("Reward per episode")
+            plt.grid(True)
+
+            plt.plot(eps, rwd_exps_avg_percentile95, label="95th percentile over 100 episodes")
+            plt.plot(eps, rwd_exps_avg_ma, label="100-episode moving average")
+            plt.plot(eps, rwd_exps_avg_percentile5, label="5th percentile over 100 episodes")
+            plt.legend(loc='lower right')
+            print("Average final reward: {:3.2f} (std={:3.2f}).".format(rwd_exps_avg_ma[-1], rwd_exps_avg_movstd[-1]))
+            plt.title("Final average reward: {:3.2f} (std={:3.2f})".format(rwd_exps_avg_ma[-1], rwd_exps_avg_movstd[-1]))
+
+            loss_exps_avg = np.mean(self.Loss_per_ep_v, axis=0)
+            plt.subplot(212)
+            plt.semilogy(eps, loss_exps_avg, label="Average over {:3d} experiments".format(n_exps))
+            plt.xlabel("Episode number")
+            plt.ylabel("Loss per episode")
+            plt.grid(True)
+
+            loss_exps_avg_ma = np.zeros(loss_exps_avg.shape[0])
+            for s in range(loss_exps_avg.shape[0]):
+                loss_exps_avg_ma[s] = np.mean(loss_exps_avg[max(0, s - 100):s + 1])
+            plt.plot(eps, loss_exps_avg_ma, label="100-episode moving average")
+            plt.legend(loc='lower right')
+
+            plt.suptitle("\n".join(wrap(self.exps_conf_str, 60)))
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.85)
+
+            if self.figures_dir is not None:
+                fig_savepath = os.path.join(self.figures_dir, "ExpsAverage.png")
+                plt.savefig(fig_savepath)
+            plt.close(fig)
 
         return rwd_exps_avg_ma[-1]
 
     def plot_value_function(self):
-        n_ep = self.Rwd_per_ep_v.shape[1]
-        fig = plt.figure()
-        for ep in draw_equispaced_items_from_sequence(7, n_ep):
-            plt.plot(self.agent_value_function[self.exp, ep, :], label="Episode {:4d}".format(ep))
-        plt.xlabel("Steps")
-        plt.ylabel("Value")
-        plt.grid(True)
-        plt.legend(loc='lower right')
-        plt.title("Value functions for experiment {:2d}".format(self.exp))
-
         if self.figures_dir is not None:
-            fig_savepath = os.path.join(self.figures_dir, "Experiment{}_ValueFunctions.png".format(self.exp))
-            plt.savefig(fig_savepath)
-        plt.close(fig)
+            n_ep = self.Rwd_per_ep_v.shape[1]
+            fig = plt.figure()
+            for ep in draw_equispaced_items_from_sequence(7, n_ep):
+                plt.plot(self.agent_value_function[self.exp, ep, :], label="Episode {:4d}".format(ep))
+            plt.xlabel("Steps")
+            plt.ylabel("Value")
+            plt.grid(True)
+            plt.legend(loc='lower right')
+            plt.title("Value functions for experiment {:2d}".format(self.exp))
+
+            if self.figures_dir is not None:
+                fig_savepath = os.path.join(self.figures_dir, "Experiment{}_ValueFunctions.png".format(self.exp))
+                plt.savefig(fig_savepath)
+            plt.close(fig)
 
     def plot_rwd_loss(self):
-        n_ep = self.Rwd_per_ep_v.shape[1]
-
-        eps = range(n_ep)
-        fig = plt.figure()
-        ax1 = plt.subplot(211)
-        plt.plot(eps, self.Rwd_per_ep_v[self.exp, :], label="Instantaneous")
-        plt.plot(eps, self.Avg_Rwd_per_ep[self.exp, :], label="Mean over {} eps".format(self.n_avg_ep))
-        plt.ylim([-self.max_step - 10, -70])
-        plt.xlabel("Episode number")
-        plt.ylabel("Reward per episode")
-
-        ax2 = ax1.twinx()
-        plt.plot(eps, self.Agent_Epsilon_per_ep[self.exp, :], label="Agent epsilon", color='r')
-        ax2.set_ylabel(r'Agent $\varepsilon$', color='r')
-        ax2.tick_params('y', colors='r')
-
-        plt.grid(True)
-        ttl = "Final average reward: {:3.2f} (SD={:3.2f})"
-        plt.title(ttl.format(self.Avg_Rwd_per_ep[self.exp, -1], np.std(self.Rwd_per_ep_v[self.exp, n_ep-100:n_ep-1])))
-        plt.legend(loc='lower right')
-
-        rwd_per_ep_exp_avg = np.mean(self.Rwd_per_ep_v[0:self.exp+1, n_ep-100:n_ep-1], axis=1)
-        print("Final average reward, averaged over {} experiments: {} (std = {}).".format(self.exp+1,
-                                                                                          np.mean(rwd_per_ep_exp_avg),
-                                                                                          np.std(rwd_per_ep_exp_avg)))
-
-        plt.subplot(212)
-        plt.semilogy(eps, self.Loss_per_ep_v[self.exp, :], label="Instantaneous")
-        plt.semilogy(eps, self.Avg_Loss_per_ep[self.exp, :], label="Mean over {} eps".format(self.n_avg_ep))
-        plt.xlabel("Episode number")
-        plt.ylabel("Loss per episode")
-        plt.grid(True)
-        plt.title("Value function loss")
-        plt.legend(loc='lower right')
-
-        sttl = self.exps_conf_str + ". Experiment {}".format(self.exp)
-        plt.suptitle("\n".join(wrap(sttl, 60)))
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.85)
-
         if self.figures_dir is not None:
-            fig_savepath = os.path.join(self.figures_dir, "Experiment{}_Rwd_Loss.png".format(self.exp))
-            plt.savefig(fig_savepath)
-        plt.close(fig)
+            n_ep = self.Rwd_per_ep_v.shape[1]
+
+            eps = range(n_ep)
+            fig = plt.figure()
+            ax1 = plt.subplot(211)
+            plt.plot(eps, self.Rwd_per_ep_v[self.exp, :], label="Instantaneous")
+            plt.plot(eps, self.Avg_Rwd_per_ep[self.exp, :], label="Mean over {} eps".format(self.n_avg_ep))
+            # plt.ylim([-self.max_step - 10, -70])
+            plt.xlabel("Episode number")
+            plt.ylabel("Reward per episode")
+
+            ax2 = ax1.twinx()
+            plt.plot(eps, self.Agent_Epsilon_per_ep[self.exp, :], label="Agent epsilon", color='r')
+            ax2.set_ylabel(r'Agent $\varepsilon$', color='r')
+            ax2.tick_params('y', colors='r')
+
+            plt.grid(True)
+            ttl = "Final average reward: {:3.2f} (SD={:3.2f})"
+            plt.title(ttl.format(self.Avg_Rwd_per_ep[self.exp, -1], np.std(self.Rwd_per_ep_v[self.exp, n_ep-100:n_ep-1])))
+            plt.legend(loc='lower right')
+
+            rwd_per_ep_exp_avg = np.mean(self.Rwd_per_ep_v[0:self.exp+1, n_ep-100:n_ep-1], axis=1)
+            print("Final average reward, averaged over {} experiments: {} (std = {}).".format(self.exp+1,
+                                                                                              np.mean(rwd_per_ep_exp_avg),
+                                                                                              np.std(rwd_per_ep_exp_avg)))
+
+            plt.subplot(212)
+            plt.semilogy(eps, self.Loss_per_ep_v[self.exp, :], label="Instantaneous")
+            plt.semilogy(eps, self.Avg_Loss_per_ep[self.exp, :], label="Mean over {} eps".format(self.n_avg_ep))
+            plt.xlabel("Episode number")
+            plt.ylabel("Loss per episode")
+            plt.grid(True)
+            plt.title("Value function loss")
+            plt.legend(loc='lower right')
+
+            sttl = self.exps_conf_str + ". Experiment {}".format(self.exp)
+            plt.suptitle("\n".join(wrap(sttl, 60)))
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.85)
+
+            if self.figures_dir is not None:
+                fig_savepath = os.path.join(self.figures_dir, "Experiment{}_Rwd_Loss.png".format(self.exp))
+                plt.savefig(fig_savepath)
+            plt.close(fig)
