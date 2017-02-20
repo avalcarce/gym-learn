@@ -238,7 +238,7 @@ class ExperimentsManager:
                                                  n_ep, self.target_params_update_period_steps)
 
     def __create_figures_directory(self):
-        self.figures_dir = os.path.join(self.figures_dir, self.exps_conf_str)
+        self.figures_dir = os.path.join(self.figures_dir, self.env_name, self.exps_conf_str)
         if not os.path.exists(self.figures_dir):
             os.makedirs(self.figures_dir)
         else:
@@ -278,9 +278,11 @@ class ExperimentsManager:
 
             if self.summaries_path is not None:
                 self.summaries_path_current = os.path.join(self.summaries_path,
+                                                           self.env_name,
                                                            self.exps_conf_str + "_Exp" + str(self.exp))
             if self.checkpoints_dir is not None:
                 self.checkpoints_dir_current = os.path.join(self.checkpoints_dir,
+                                                            self.env_name,
                                                             self.exps_conf_str+"_Exp"+str(self.exp))
 
             # Create agent
@@ -339,7 +341,7 @@ class ExperimentsManager:
         plt.title("\n".join(wrap(ttl, 60)))
 
         if self.figures_dir is not None:
-            fig_savepath = os.path.join(self.figures_dir, + "RwdsComparisonsAcrossExps.png")
+            fig_savepath = os.path.join(self.figures_dir, "RwdsComparisonsAcrossExps.png")
             plt.savefig(fig_savepath)
         plt.close(fig)
 
