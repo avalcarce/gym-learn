@@ -2,8 +2,12 @@ import gym
 from gym import wrappers
 import copy
 import time
-import matplotlib.pyplot as plt
+from sys import platform
 from textwrap import wrap
+if platform == "linux" or platform == "linux2":
+    import matplotlib
+    matplotlib.use('Agg')  # This is to generate images without having a window appear.
+import matplotlib.pyplot as plt
 
 from .utils import *
 from .agents import AgentEpsGreedy
@@ -69,6 +73,11 @@ class ExperimentsManager:
         self.Avg_Loss_per_ep = np.zeros((1, 5000))
         self.Agent_Epsilon_per_ep = np.zeros((1, 5000))
         self.agent_value_function = np.zeros((1, 1, self.max_step))
+        self.rwd_exps_avg = np.mean(self.Rwd_per_ep_v, axis=0)  # Rwd averaged over all experiments
+        self.rwd_exps_avg_ma = np.zeros(self.rwd_exps_avg.shape[0])
+        self.rwd_exps_avg_movstd = np.zeros(self.rwd_exps_avg.shape[0])
+        self.rwd_exps_avg_percentile5 = np.zeros(self.rwd_exps_avg.shape[0])
+        self.rwd_exps_avg_percentile95 = np.zeros(self.rwd_exps_avg.shape[0])
 
     def __print_episode_progress(self, loss_v):
         if self.ep_verbose:
@@ -230,12 +239,13 @@ class ExperimentsManager:
             layers_size += "-"+str(s)
         layers_size += "-"+str(n_actions)
 
-        exp_conf_str = "{}_Disc{}_DecEps{}_EpsMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
-                       "DblDQN{}_RepMm{}_BS{}_NEx{}_NEp{}_PrmsUpd{}"
-        self.exps_conf_str = exp_conf_str.format(layers_size, self.discount, self.decay_eps, self.eps_min,
-                                                 self.learning_rate, self.decay_lr, self.max_step,
-                                                 self.double_dqn, self.replay_memory_max_size, self.batch_size, n_exps,
-                                                 n_ep, self.target_params_update_period_steps)
+        exp_conf_str = "{}_{}_Disc{}_DecE{}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
+                       "DDQN{}_RepMm{}_BS{}_NEx{}_NEp{}_PmsUp{}"
+        self.exps_conf_str = exp_conf_str.format(time.strftime("%Y_%m_%d__%H_%M_%S"), layers_size, self.discount,
+                                                 self.decay_eps, self.eps_min, self.learning_rate,
+                                                 1 if self.decay_lr else 0, self.max_step, 1 if self.double_dqn else 0,
+                                                 self.replay_memory_max_size, self.batch_size, n_exps, n_ep,
+                                                 self.target_params_update_period_steps)
 
     def __create_figures_directory(self):
         if self.figures_dir is not None:
@@ -314,30 +324,33 @@ class ExperimentsManager:
             self.plot_value_function()
             self.print_experiment_summary()
 
-        rwd = self.plot_rwd_averages(n_exps)
+        self.calculate_avg_rwd()
+        self.plot_rwd_averages(n_exps)
         if plot_results:
             plt.show()
 
-        return rwd
+        return self.rwd_exps_avg_ma[-1]
 
     def print_experiment_summary(self):
         duration_ms = np.mean(self.step_durations_s) * 1000
         print("Average step duration: {:2.2f} ms".format(duration_ms))
 
+    def calculate_avg_rwd(self):
+        self.rwd_exps_avg = np.mean(self.Rwd_per_ep_v, axis=0)  # Rwd averaged over all experiments
+        self.rwd_exps_avg_ma = np.zeros(self.rwd_exps_avg.shape[0])
+        self.rwd_exps_avg_movstd = np.zeros(self.rwd_exps_avg.shape[0])
+        self.rwd_exps_avg_percentile5 = np.zeros(self.rwd_exps_avg.shape[0])
+        self.rwd_exps_avg_percentile95 = np.zeros(self.rwd_exps_avg.shape[0])
+
+        for s in range(self.rwd_exps_avg.shape[0]):
+            self.rwd_exps_avg_ma[s] = np.mean(self.rwd_exps_avg[max(0, s - 99):s + 1])
+            self.rwd_exps_avg_movstd[s] = np.std(self.rwd_exps_avg[max(0, s - 99):s + 1])
+            self.rwd_exps_avg_percentile5[s] = np.percentile(self.rwd_exps_avg[max(0, s - 99):s + 1], 5)
+            self.rwd_exps_avg_percentile95[s] = np.percentile(self.rwd_exps_avg[max(0, s - 99):s + 1], 95)
+
     def plot_rwd_averages(self, n_exps):
         n_ep = self.Rwd_per_ep_v.shape[1]
         eps = range(n_ep)
-
-        rwd_exps_avg = np.mean(self.Rwd_per_ep_v, axis=0)  # Rwd averaged over all experiments
-        rwd_exps_avg_ma = np.zeros(rwd_exps_avg.shape[0])
-        rwd_exps_avg_movstd = np.zeros(rwd_exps_avg.shape[0])
-        rwd_exps_avg_percentile5 = np.zeros(rwd_exps_avg.shape[0])
-        rwd_exps_avg_percentile95 = np.zeros(rwd_exps_avg.shape[0])
-        for s in range(rwd_exps_avg.shape[0]):
-            rwd_exps_avg_ma[s] = np.mean(rwd_exps_avg[max(0, s - 99):s + 1])
-            rwd_exps_avg_movstd[s] = np.std(rwd_exps_avg[max(0, s - 99):s + 1])
-            rwd_exps_avg_percentile5[s] = np.percentile(rwd_exps_avg[max(0, s - 99):s + 1], 5)
-            rwd_exps_avg_percentile95[s] = np.percentile(rwd_exps_avg[max(0, s - 99):s + 1], 95)
 
         if self.figures_dir is not None:
             # PLOT ALL EXPERIMENTS
@@ -361,17 +374,19 @@ class ExperimentsManager:
             # PLOT AVERAGE OVER ALL EXPERIMENTS
             fig = plt.figure()
             plt.subplot(211)
-            plt.plot(eps, rwd_exps_avg, label="Average over {:3d} experiments".format(n_exps))
+            plt.plot(eps, self.rwd_exps_avg, label="Average over {:3d} experiments".format(n_exps))
             # plt.ylim([-self.max_step - 10, -70])
             plt.ylabel("Reward per episode")
             plt.grid(True)
 
-            plt.plot(eps, rwd_exps_avg_percentile95, label="95th percentile over 100 episodes")
-            plt.plot(eps, rwd_exps_avg_ma, label="100-episode moving average")
-            plt.plot(eps, rwd_exps_avg_percentile5, label="5th percentile over 100 episodes")
+            plt.plot(eps, self.rwd_exps_avg_percentile95, label="95th percentile over 100 episodes")
+            plt.plot(eps, self.rwd_exps_avg_ma, label="100-episode moving average")
+            plt.plot(eps, self.rwd_exps_avg_percentile5, label="5th percentile over 100 episodes")
             plt.legend(loc='lower right')
-            print("Average final reward: {:3.2f} (std={:3.2f}).".format(rwd_exps_avg_ma[-1], rwd_exps_avg_movstd[-1]))
-            plt.title("Final average reward: {:3.2f} (std={:3.2f})".format(rwd_exps_avg_ma[-1], rwd_exps_avg_movstd[-1]))
+            print("Average final reward: {:3.2f} (std={:3.2f}).".format(self.rwd_exps_avg_ma[-1],
+                                                                        self.rwd_exps_avg_movstd[-1]))
+            plt.title("Final average reward: {:3.2f} (std={:3.2f})".format(self.rwd_exps_avg_ma[-1],
+                                                                           self.rwd_exps_avg_movstd[-1]))
 
             loss_exps_avg = np.mean(self.Loss_per_ep_v, axis=0)
             plt.subplot(212)
@@ -394,8 +409,6 @@ class ExperimentsManager:
                 fig_savepath = os.path.join(self.figures_dir, "ExpsAverage.png")
                 plt.savefig(fig_savepath)
             plt.close(fig)
-
-        return rwd_exps_avg_ma[-1]
 
     def plot_value_function(self):
         if self.figures_dir is not None:
