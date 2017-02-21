@@ -239,7 +239,7 @@ class ExperimentsManager:
             layers_size += "-"+str(s)
         layers_size += "-"+str(n_actions)
 
-        exp_conf_str = "{}_{}_Disc{}_DecE{}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
+        exp_conf_str = "{}_{}_Disc{:1.2e}_DecE{}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
                        "DDQN{}_RepMm{}_BS{}_NEx{}_NEp{}_PmsUp{}"
         self.exps_conf_str = exp_conf_str.format(time.strftime("%Y_%m_%d__%H_%M_%S"), layers_size, self.discount,
                                                  self.decay_eps, self.eps_min, self.learning_rate,
