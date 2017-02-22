@@ -16,11 +16,11 @@ from .ReplayMemory import ReplayMemory
 
 
 class ExperimentsManager:
-    def __init__(self, env_name, results_dir_prefix, summaries_path, agent_value_function_hidden_layers_size,
+    def __init__(self, env_name, agent_value_function_hidden_layers_size, results_dir_prefix=None, summaries_path=None,
                  figures_dir=None, discount=0.99, decay_eps=0.995, eps_min=0.0001, learning_rate=1E-4, decay_lr=False,
                  max_step=10000, replay_memory_max_size=100000, ep_verbose=False, exp_verbose=True, batch_size=64,
                  upload_last_exp=False, double_dqn=False, target_params_update_period_steps=1, gym_api_key="",
-                 checkpoints_dir=None, min_avg_rwd=-110):
+                 gym_algorithm_id=None, checkpoints_dir=None, min_avg_rwd=-110):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
         self.gym_stats_dir = None
@@ -40,6 +40,7 @@ class ExperimentsManager:
         assert target_params_update_period_steps > 0, "The period for updating the target parameters must be positive."
         self.target_params_update_period_steps = target_params_update_period_steps
         self.gym_api_key = gym_api_key
+        self.gym_algorithm_id = gym_algorithm_id
         self.checkpoints_dir = checkpoints_dir
         self.checkpoints_dir_current = checkpoints_dir
 
@@ -71,6 +72,7 @@ class ExperimentsManager:
         self.Loss_per_ep_v = np.zeros((1, 5000))
         self.Avg_Rwd_per_ep = np.zeros((1, 5000))
         self.Avg_Loss_per_ep = np.zeros((1, 5000))
+        self.n_eps_to_reach_min_avg_rwd = np.zeros(1, dtype=float)
         self.Agent_Epsilon_per_ep = np.zeros((1, 5000))
         self.agent_value_function = np.zeros((1, 1, self.max_step))
         self.rwd_exps_avg = np.mean(self.Rwd_per_ep_v, axis=0)  # Rwd averaged over all experiments
@@ -143,7 +145,6 @@ class ExperimentsManager:
             avg_loss = self.Avg_Loss_per_ep[self.exp, self.ep]
 
             avg_rwds = self.Avg_Rwd_per_ep[self.exp, 0:self.ep+1]
-            # n_solved_eps = np.count_nonzero(avg_rwds >= self.min_avg_rwd)
             i_last_low_rwd = np.max(np.where(avg_rwds < self.min_avg_rwd))
             n_solved_eps = self.ep - i_last_low_rwd
 
@@ -218,12 +219,20 @@ class ExperimentsManager:
                     train = False
                     print("Minimum average reward reached. Stopping training.")
 
+            if self.Avg_Rwd_per_ep[self.exp, self.ep] >= self.min_avg_rwd:
+                self.n_eps_to_reach_min_avg_rwd[self.exp] = np.minimum(self.ep,
+                                                                       self.n_eps_to_reach_min_avg_rwd[self.exp])
+
             if self.agent.eps > self.eps_min:
                 self.agent.eps *= self.decay_eps
 
             self.__print_experiment_progress()
 
     def __create_gym_stats_directory(self, env):
+        if self.results_dir_prefix is None:
+            raise ValueError("A prefix for the Gym results directory must be provided.")
+        if not os.path.exists(self.results_dir_prefix):
+            os.makedirs(self.results_dir_prefix)
         t = get_last_folder_id(self.results_dir_prefix) + 1  # Calculate next test id
         self.gym_stats_dir = os.path.join(self.results_dir_prefix, str(t).zfill(4))
         if not os.path.exists(self.gym_stats_dir):
@@ -239,8 +248,8 @@ class ExperimentsManager:
             layers_size += "-"+str(s)
         layers_size += "-"+str(n_actions)
 
-        exp_conf_str = "{}_{}_Disc{:1.2e}_DecE{:1.2e}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
-                       "DDQN{}_RepMm{}_BS{}_NEx{}_NEp{}_PmsUp{}"
+        exp_conf_str = "{}_{}_Disc{:1.3e}_DecE{:1.2e}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
+                       "DDQN{}_RepMm{:1.1e}_BS{}_NEx{}_NEp{}_PmsUp{}"
         self.exps_conf_str = exp_conf_str.format(time.strftime("%Y_%m_%d__%H_%M_%S"), layers_size, self.discount,
                                                  self.decay_eps, self.eps_min, self.learning_rate,
                                                  1 if self.decay_lr else 0, self.max_step, 1 if self.double_dqn else 0,
@@ -263,6 +272,8 @@ class ExperimentsManager:
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
         self.Loss_per_ep_v = np.zeros((n_exps, n_ep))
         self.Avg_Rwd_per_ep = np.zeros((n_exps, n_ep))
+        self.n_eps_to_reach_min_avg_rwd = np.zeros(n_exps, dtype=float)
+        self.n_eps_to_reach_min_avg_rwd.fill(n_ep)
         self.Avg_Loss_per_ep = np.zeros((n_exps, n_ep))
         self.Agent_Epsilon_per_ep = np.zeros((n_exps, n_ep))
         self.agent_value_function = np.zeros((n_exps, n_ep, self.max_step))
@@ -295,6 +306,8 @@ class ExperimentsManager:
                 self.checkpoints_dir_current = os.path.join(self.checkpoints_dir,
                                                             self.env_name,
                                                             self.exps_conf_str+"_Exp"+str(self.exp))
+                if not os.path.exists(self.checkpoints_dir_current):
+                    os.makedirs(self.checkpoints_dir_current)
 
             # Create agent
             value_function = ValueFunctionDQN(scope="q", state_dim=state_dim, n_actions=n_actions,
@@ -317,7 +330,7 @@ class ExperimentsManager:
             env.close()
             if self.upload_last_exp and self.exp == n_exps - 1:
                 print("Trying to upload results to the scoreboard.")
-                gym.upload(self.gym_stats_dir, api_key=self.gym_api_key)
+                gym.upload(self.gym_stats_dir, api_key=self.gym_api_key, algorithm_id=self.gym_algorithm_id)
 
             # Plot results
             self.plot_rwd_loss()
@@ -329,7 +342,8 @@ class ExperimentsManager:
         if plot_results:
             plt.show()
 
-        return self.rwd_exps_avg_ma[-1]
+        # Return the final Rwd averaged over all experiments AND the mean number of episodes needed to reach the min Rwd
+        return self.rwd_exps_avg_ma[-1], np.mean(self.n_eps_to_reach_min_avg_rwd)
 
     def print_experiment_summary(self):
         duration_ms = np.mean(self.step_durations_s) * 1000
@@ -383,7 +397,7 @@ class ExperimentsManager:
             plt.plot(eps, self.rwd_exps_avg_ma, label="100-episode moving average")
             plt.plot(eps, self.rwd_exps_avg_percentile5, label="5th percentile over 100 episodes")
             plt.legend(loc='lower right')
-            print("Average final reward: {:3.2f} (std={:3.2f}).".format(self.rwd_exps_avg_ma[-1],
+            print("Average final reward: {:3.2f} (std={:3.2f}).\n".format(self.rwd_exps_avg_ma[-1],
                                                                         self.rwd_exps_avg_movstd[-1]))
             plt.title("Final average reward: {:3.2f} (std={:3.2f})".format(self.rwd_exps_avg_ma[-1],
                                                                            self.rwd_exps_avg_movstd[-1]))
