@@ -398,7 +398,7 @@ class ExperimentsManager:
             plt.plot(eps, self.rwd_exps_avg_percentile5, label="5th percentile over 100 episodes")
             plt.legend(loc='lower right')
             print("Average final reward: {:3.2f} (std={:3.2f}).\n".format(self.rwd_exps_avg_ma[-1],
-                                                                        self.rwd_exps_avg_movstd[-1]))
+                                                                          self.rwd_exps_avg_movstd[-1]))
             plt.title("Final average reward: {:3.2f} (std={:3.2f})".format(self.rwd_exps_avg_ma[-1],
                                                                            self.rwd_exps_avg_movstd[-1]))
 
@@ -465,9 +465,10 @@ class ExperimentsManager:
             plt.legend(loc='lower right')
 
             rwd_per_ep_exp_avg = np.mean(self.Rwd_per_ep_v[0:self.exp+1, n_ep-100:n_ep-1], axis=1)
-            print("Final mean reward, averaged over {} experiments: {} (std = {}).".format(self.exp+1,
-                                                                                           np.mean(rwd_per_ep_exp_avg),
-                                                                                           np.std(rwd_per_ep_exp_avg)))
+            print("Final mean reward, averaged over {} experiment{}: {} (std = {}).".format(self.exp+1,
+                                                                                            's' if self.exp > 0 else '',
+                                                                                            np.mean(rwd_per_ep_exp_avg),
+                                                                                            np.std(rwd_per_ep_exp_avg)))
 
             plt.subplot(212)
             plt.semilogy(eps, self.Loss_per_ep_v[self.exp, :], label="Instantaneous")
