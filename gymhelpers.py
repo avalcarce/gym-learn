@@ -60,11 +60,11 @@ class ExperimentsManager:
         self.n_avg_ep = 100         # Number of consecutive episodes to calculate the average reward
 
         self.conf_msg = "\nEXECUTING EXPERIMENT {} OF {} IN ENVIRONMENT {}."
-        self.episode_progress_msg = "Step {:5d}/{:5d}. Avg step duration: {:3.1f} ms." + \
+        self.episode_progress_msg = "Step {:5d}/{:5d}. Avg step duration: {:3.6f} ms." + \
                                     " Loss = {:3.2e}."
         self.exp_progress_msg = "Exp {:3d}. Ep {:5d}, Rwd={:4.0f} (mean={:4.0f} over {:3d} episodes)." + \
                                 " {} exceeded in {:4d} eps. Loss={:1.2e} (avg={:1.2e}). Agent epsilon={:3.2f} %." + \
-                                " Average step duration: {:2.2f} ms."
+                                " Average step duration: {:2.6f} ms."
         self.exps_conf_str = ""
 
         # Memory pre-allocation
@@ -347,7 +347,7 @@ class ExperimentsManager:
 
     def print_experiment_summary(self):
         duration_ms = np.mean(self.step_durations_s) * 1000
-        print("Average step duration: {:2.2f} ms".format(duration_ms))
+        print("Average step duration: {:2.6f} ms".format(duration_ms))
 
     def calculate_avg_rwd(self):
         self.rwd_exps_avg = np.mean(self.Rwd_per_ep_v, axis=0)  # Rwd averaged over all experiments
