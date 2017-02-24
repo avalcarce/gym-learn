@@ -268,7 +268,7 @@ class ExperimentsManager:
                     else:
                         break
 
-    def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True):
+    def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True, figures_format=None):
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
         self.Loss_per_ep_v = np.zeros((n_exps, n_ep))
         self.Avg_Rwd_per_ep = np.zeros((n_exps, n_ep))
@@ -333,12 +333,12 @@ class ExperimentsManager:
                 gym.upload(self.gym_stats_dir, api_key=self.gym_api_key, algorithm_id=self.gym_algorithm_id)
 
             # Plot results
-            self.plot_rwd_loss()
-            self.plot_value_function()
+            self.plot_rwd_loss(figures_format=figures_format)
+            self.plot_value_function(figures_format=figures_format)
             self.print_experiment_summary()
 
         self.calculate_avg_rwd()
-        self.plot_rwd_averages(n_exps)
+        self.plot_rwd_averages(n_exps, figures_format=figures_format)
         if plot_results:
             plt.show()
 
@@ -362,7 +362,7 @@ class ExperimentsManager:
             self.rwd_exps_avg_percentile5[s] = np.percentile(self.rwd_exps_avg[max(0, s - 99):s + 1], 5)
             self.rwd_exps_avg_percentile95[s] = np.percentile(self.rwd_exps_avg[max(0, s - 99):s + 1], 95)
 
-    def plot_rwd_averages(self, n_exps):
+    def plot_rwd_averages(self, n_exps, figures_format=None):
         n_ep = self.Rwd_per_ep_v.shape[1]
         eps = range(n_ep)
 
@@ -383,6 +383,14 @@ class ExperimentsManager:
             if self.figures_dir is not None:
                 fig_savepath = os.path.join(self.figures_dir, "RwdsComparisonsAcrossExps.png")
                 plt.savefig(fig_savepath)
+
+                if figures_format is not None:
+                    try:
+                        fig_savepath = os.path.join(self.figures_dir,
+                                                    "RwdsComparisonsAcrossExps.{}".format(figures_format))
+                        plt.savefig(fig_savepath, format=figures_format)
+                    except:
+                        print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
 
             # PLOT AVERAGE OVER ALL EXPERIMENTS
@@ -422,9 +430,16 @@ class ExperimentsManager:
             if self.figures_dir is not None:
                 fig_savepath = os.path.join(self.figures_dir, "ExpsAverage.png")
                 plt.savefig(fig_savepath)
+
+                if figures_format is not None:
+                    try:
+                        fig_savepath = os.path.join(self.figures_dir, "ExpsAverage.{}".format(figures_format))
+                        plt.savefig(fig_savepath, format=figures_format)
+                    except:
+                        print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
 
-    def plot_value_function(self):
+    def plot_value_function(self, figures_format=None):
         if self.figures_dir is not None:
             n_ep = self.Rwd_per_ep_v.shape[1]
             fig = plt.figure()
@@ -439,9 +454,16 @@ class ExperimentsManager:
             if self.figures_dir is not None:
                 fig_savepath = os.path.join(self.figures_dir, "Experiment{}_ValueFunctions.png".format(self.exp))
                 plt.savefig(fig_savepath)
+                if figures_format is not None:
+                    try:
+                        fig_savepath = os.path.join(self.figures_dir,
+                                                    "Experiment{}_ValueFunctions.{}".format(self.exp, figures_format))
+                        plt.savefig(fig_savepath, format=figures_format)
+                    except:
+                        print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
 
-    def plot_rwd_loss(self):
+    def plot_rwd_loss(self, figures_format=None):
         if self.figures_dir is not None:
             n_ep = self.Rwd_per_ep_v.shape[1]
 
@@ -487,4 +509,12 @@ class ExperimentsManager:
             if self.figures_dir is not None:
                 fig_savepath = os.path.join(self.figures_dir, "Experiment{}_Rwd_Loss.png".format(self.exp))
                 plt.savefig(fig_savepath)
+
+                if figures_format is not None:
+                    try:
+                        fig_savepath = os.path.join(self.figures_dir, "Experiment{}_Rwd_Loss.{}".format(self.exp,
+                                                                                                        figures_format))
+                        plt.savefig(fig_savepath, format=figures_format)
+                    except:
+                        print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
