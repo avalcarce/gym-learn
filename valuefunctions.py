@@ -192,4 +192,5 @@ class ValueFunctionDQN:
         self.session.run(update_ops)
 
     def close_summary_file(self):
-        self.train_writer.close()
+        if self.summaries_path is not None:
+            self.train_writer.close()
