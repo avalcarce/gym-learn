@@ -215,7 +215,7 @@ class ExperimentsManager:
             self.Agent_Epsilon_per_ep[self.exp, self.ep] = self.agent.eps
 
             if stop_training_min_avg_rwd is not None:
-                if self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
+                if train and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
                     train = False
                     print("Minimum average reward reached. Stopping training.")
 
