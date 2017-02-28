@@ -1,4 +1,7 @@
-from collections import Iterable
+from .utils import *
+from .agents import AgentEpsGreedy
+from .valuefunctions import ValueFunctionDQN
+from .datastructures import DoubleEndedQueue, SumTree
 
 import gym
 from gym import wrappers
@@ -11,11 +14,6 @@ if platform == "linux" or platform == "linux2":
     matplotlib.use('Agg')  # This is to generate images without having a window appear.
 import matplotlib.pyplot as plt
 
-from .utils import *
-from .agents import AgentEpsGreedy
-from .valuefunctions import ValueFunctionDQN
-from .datastructures import DoubleEndedQueue, SumTree
-
 
 class ExperimentsManager:
     def __init__(self, env_name, agent_value_function_hidden_layers_size, results_dir_prefix=None, summaries_path=None,
@@ -23,7 +21,7 @@ class ExperimentsManager:
                  max_step=10000, replay_memory_max_size=100000, ep_verbose=False, exp_verbose=True, batch_size=64,
                  upload_last_exp=False, double_dqn=False, target_params_update_period_steps=1, gym_api_key="",
                  gym_algorithm_id=None, checkpoints_dir=None, min_avg_rwd=-110, replay_period_steps=1,
-                 per_proportional_prioritization=False):
+                 per_proportional_prioritization=False, per_apply_importance_sampling=False):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
         self.gym_stats_dir = None
@@ -36,6 +34,7 @@ class ExperimentsManager:
         self.learning_rate = learning_rate
         self.decay_lr = decay_lr
         self.max_step = max_step
+        self.n_ep = None
         self.replay_period_steps = replay_period_steps
         self.replay_memory_max_size = replay_memory_max_size
         self.ep_verbose = ep_verbose  # Whether or not to print progress during episodes
@@ -48,12 +47,14 @@ class ExperimentsManager:
         self.checkpoints_dir = checkpoints_dir
         self.checkpoints_dir_current = checkpoints_dir
 
-        # Prioritized Experience Replay parameters
+        # Prioritized Experience Replay parameters. See https://arxiv.org/pdf/1511.05952.pdf
         self.per_proportional_prioritization = per_proportional_prioritization  # Flavour of Prioritized Experience Rep.
+        self.per_apply_importance_sampling = per_apply_importance_sampling
         self.prio_max = 0
         self.per_epsilon = 1E-6
         self.per_alpha = 0.6
-        self.beta0 = 0.4
+        self.per_beta0 = 0.4
+        self.per_beta = self.per_beta0
 
         self.agent = None
         self.memory = None  # Experience replay memory
@@ -133,7 +134,11 @@ class ExperimentsManager:
         if self.memory.n_entries >= self.batch_size:
             # Extract a batch of random transitions from the replay memory
             if self.per_proportional_prioritization:
-                idx, experience = self.memory.sample(self.batch_size)
+                idx, priorities, experience = self.memory.sample(self.batch_size)
+                if self.per_apply_importance_sampling:
+                    sampling_probabilities = priorities/self.memory.total()
+                    w = np.power(self.memory.n_entries*sampling_probabilities, -self.per_beta)
+                    w = w/w.max()
             else:
                 experience = self.memory.sample(self.batch_size)
             states_b, actions_b, rewards_b, states_n_b, done_b = zip(*experience)
@@ -153,7 +158,10 @@ class ExperimentsManager:
             for j, action in enumerate(actions_b):
                 targets[j, action] = targets_b[j]
 
-            loss_v, errors = self.agent.train(states_b, targets)
+            if self.per_apply_importance_sampling:
+                loss_v, errors = self.agent.train(states_b, targets, w=w)
+            else:
+                loss_v, errors = self.agent.train(states_b, targets)
             errors = errors[np.arange(len(errors)), actions_b]
 
             if self.per_proportional_prioritization:  # Update transition priorities
@@ -165,7 +173,7 @@ class ExperimentsManager:
         return loss_v
 
     def error2priority(self, errors):
-        return (np.abs(errors) + self.per_epsilon) ** self.per_alpha
+        return np.power(np.abs(errors) + self.per_epsilon, self.per_alpha)
 
     def __print_experiment_progress(self):
         if self.exp_verbose:
@@ -186,6 +194,10 @@ class ExperimentsManager:
                 self.exp_progress_msg.format(self.exp, self.ep, rwd, avg_rwd, self.n_avg_ep, self.min_avg_rwd,
                                              n_solved_eps, loss, avg_loss, self.agent.eps*100, duration_ms))
 
+    def anneal_per_importance_sampling(self):
+        if self.per_proportional_prioritization and self.per_apply_importance_sampling:
+            self.per_beta = self.per_beta0 + self.ep*(1-self.per_beta0)/self.n_ep
+
     def run_episode(self, env, train=True):
         state = env.reset()
         done = False
@@ -200,6 +212,8 @@ class ExperimentsManager:
                     self.agent.value_func.update_old_params()
                     if self.ep_verbose:
                         print("Copied model parameters to target network.")
+
+            self.anneal_per_importance_sampling()
 
             t = time.time()
             self.__print_episode_progress(loss_v)
@@ -232,6 +246,7 @@ class ExperimentsManager:
         return loss_v, total_reward
 
     def run_experiment(self, env, n_ep, stop_training_min_avg_rwd=None):
+        self.n_ep = n_ep
         self.global_step = 0
         train = True
         # One experiment is composed of n_ep sequential episodes
@@ -284,13 +299,14 @@ class ExperimentsManager:
         layers_size += "-"+str(n_actions)
 
         exp_conf_str = "{}_{}_Disc{:1.2f}_DecE{:1.2e}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
-                       "DDQN{}_RepMm{:1.1e}_BS{}_NEx{}_NEp{}_PmsUp{}_K{}_PER{}"
+                       "DDQN{}_RepMm{:1.1e}_BS{}_NEx{}_NEp{}_PmsUp{}_K{}_PER{}_IS{}"
         self.exps_conf_str = exp_conf_str.format(time.strftime("%Y_%m_%d__%H_%M_%S"), layers_size, self.discount,
                                                  self.decay_eps, self.eps_min, self.learning_rate,
                                                  1 if self.decay_lr else 0, self.max_step, 1 if self.double_dqn else 0,
                                                  self.replay_memory_max_size, self.batch_size, n_exps, n_ep,
                                                  self.target_params_update_period_steps, self.replay_period_steps,
-                                                 1 if self.per_proportional_prioritization else 0)
+                                                 1 if self.per_proportional_prioritization else 0,
+                                                 1 if self.per_apply_importance_sampling else 0)
 
     def __create_figures_directory(self):
         if self.figures_dir is not None:
@@ -352,7 +368,8 @@ class ExperimentsManager:
                                               decay_lr=self.decay_lr, huber_loss=False,
                                               summaries_path=self.summaries_path_current,
                                               reset_default_graph=True,
-                                              checkpoints_dir=self.checkpoints_dir_current)
+                                              checkpoints_dir=self.checkpoints_dir_current,
+                                              weight_gradients=self.per_apply_importance_sampling)
 
             self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
                                         summaries_path_current=self.summaries_path_current)
@@ -522,7 +539,8 @@ class ExperimentsManager:
 
             plt.grid(True)
             ttl = "Final average reward: {:3.2f} (SD={:3.2f})"
-            plt.title(ttl.format(self.Avg_Rwd_per_ep[self.exp, -1], np.std(self.Rwd_per_ep_v[self.exp, n_ep-100:n_ep-1])))
+            plt.title(ttl.format(self.Avg_Rwd_per_ep[self.exp, -1],
+                                 np.std(self.Rwd_per_ep_v[self.exp, n_ep-100:n_ep-1])))
             plt.legend(loc='lower right')
 
             rwd_per_ep_exp_avg = np.mean(self.Rwd_per_ep_v[0:self.exp+1, n_ep-100:n_ep-1], axis=1)

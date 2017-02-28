@@ -1,12 +1,13 @@
 import os
 
 import tensorflow as tf
+import numpy as np
 
 
 class ValueFunctionDQN:
     def __init__(self, scope="MyValueFunctionEstimator", state_dim=2, n_actions=3, train_batch_size=64,
                  learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, huber_loss=False, summaries_path=None,
-                 reset_default_graph=False, checkpoints_dir=None):
+                 reset_default_graph=False, checkpoints_dir=None, weight_gradients=False):
         # Input check
         if hidden_layers_size is None:
             hidden_layers_size = [128, 64]  # Default ANN architecture
@@ -25,6 +26,7 @@ class ValueFunctionDQN:
         self.summaries_path = summaries_path
         self.train_writer = None
         self.checkpoints_dir = checkpoints_dir
+        self.weight_gradients = weight_gradients
 
         if reset_default_graph:
             tf.reset_default_graph()
@@ -63,7 +65,12 @@ class ValueFunctionDQN:
                 self.loss = self.huber_loss(self.train_targets, self.prediction)
             else:
                 self.E = tf.subtract(self.train_targets, self.prediction, name="Error")
-                self.SE = tf.square(self.E, name="SquaredError")
+
+                if self.weight_gradients:
+                    self.g_w = tf.placeholder(tf.float32, shape=(train_batch_size, n_actions), name="g_w")
+                    self.SE = tf.square(tf.multiply(self.g_w, self.E), name="SquaredError")
+                else:
+                    self.SE = tf.square(self.E, name="SquaredError")
                 self.loss = tf.reduce_mean(self.SE, name="loss")
 
             self.global_step = tf.Variable(0, trainable=False)
@@ -146,10 +153,13 @@ class ValueFunctionDQN:
 
         return q
 
-    def train(self, states, targets):
+    def train(self, states, targets, w=None):
         self.init_tf_session()  # Make sure the Tensorflow session exists
 
         feed_dict = {self.x: states, self.train_targets: targets}
+        if self.weight_gradients:
+            feed_dict[self.g_w] = np.transpose(np.tile(w, (self.layers_size[-1], 1)))
+
         if self.summaries_path is not None and self.n_train_epochs % 2000 == 0:
             fetches = [self.loss, self.train_op, self.E, self.merged_summaries]
         else:

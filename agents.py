@@ -20,8 +20,8 @@ class AgentEpsGreedy:
         self.current_value = action_values[a]
         return a
 
-    def train(self, states, targets):
-        loss, errors = self.value_func.train(states, targets)
+    def train(self, states, targets, w=None):
+        loss, errors = self.value_func.train(states, targets, w=w)
         return loss, errors
 
     def predict_q_values(self, states, use_old_params=False):

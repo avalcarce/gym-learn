@@ -20,6 +20,10 @@ class DoubleEndedQueue:
 
 
 class SumTree:
+    """
+    Version 5aa9f0b  on Nov 7, 2016 from:
+        https://github.com/jaara/AI-blog/blob/master/SumTree.py
+    """
     def __init__(self, capacity=100000):
         self.capacity = capacity
         self.tree = np.zeros(2*capacity - 1)
@@ -80,6 +84,7 @@ class SumTree:
 
     def sample(self, batch_size):
         batch_idx = [None] * batch_size
+        batch_priorities = [None] * batch_size
         batch = [None] * batch_size
         segment = self.total() / batch_size
 
@@ -88,6 +93,6 @@ class SumTree:
         s = np.random.uniform(a, b)
 
         for i in range(batch_size):
-            (batch_idx[i], p, batch[i]) = self.get(s[i])
+            (batch_idx[i], batch_priorities[i], batch[i]) = self.get(s[i])
 
-        return batch_idx, batch
+        return batch_idx, batch_priorities, batch
