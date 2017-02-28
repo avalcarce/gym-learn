@@ -62,7 +62,8 @@ class ValueFunctionDQN:
             if huber_loss:
                 self.loss = self.huber_loss(self.train_targets, self.prediction)
             else:
-                self.SE = tf.squared_difference(self.train_targets, self.prediction, name="SquaredError")
+                self.E = tf.subtract(self.train_targets, self.prediction, name="Error")
+                self.SE = tf.square(self.E, name="SquaredError")
                 self.loss = tf.reduce_mean(self.SE, name="loss")
 
             self.global_step = tf.Variable(0, trainable=False)
@@ -150,20 +151,20 @@ class ValueFunctionDQN:
 
         feed_dict = {self.x: states, self.train_targets: targets}
         if self.summaries_path is not None and self.n_train_epochs % 2000 == 0:
-            fetches = [self.loss, self.train_op, self.merged_summaries]
+            fetches = [self.loss, self.train_op, self.E, self.merged_summaries]
         else:
-            fetches = [self.loss, self.train_op]
+            fetches = [self.loss, self.train_op, self.E]
 
         values = self.session.run(fetches, feed_dict=feed_dict)
 
         if self.summaries_path is not None and self.n_train_epochs % 2000 == 0:
-            self.train_writer.add_summary(values[2], global_step=self.n_train_epochs)
+            self.train_writer.add_summary(values[3], global_step=self.n_train_epochs)
 
         if self.checkpoints_dir is not None and self.n_train_epochs % 40000 == 0:
             self.saver.save(self.session, self.checkpoints_dir, global_step=self.global_step)
 
         self.n_train_epochs += 1
-        return values[0]
+        return values[0], values[2]
 
     @staticmethod
     def variable_summaries(var, name, histogram=False, scalar_only=False):

@@ -21,7 +21,8 @@ class AgentEpsGreedy:
         return a
 
     def train(self, states, targets):
-        return self.value_func.train(states, targets)
+        loss, errors = self.value_func.train(states, targets)
+        return loss, errors
 
     def predict_q_values(self, states, use_old_params=False):
         return self.value_func.predict(states, use_old_params)

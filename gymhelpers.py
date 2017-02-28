@@ -1,3 +1,5 @@
+from collections import Iterable
+
 import gym
 from gym import wrappers
 import copy
@@ -12,7 +14,7 @@ import matplotlib.pyplot as plt
 from .utils import *
 from .agents import AgentEpsGreedy
 from .valuefunctions import ValueFunctionDQN
-from .ReplayMemory import ReplayMemory
+from .datastructures import DoubleEndedQueue, SumTree
 
 
 class ExperimentsManager:
@@ -20,7 +22,8 @@ class ExperimentsManager:
                  figures_dir=None, discount=0.99, decay_eps=0.995, eps_min=0.0001, learning_rate=1E-4, decay_lr=False,
                  max_step=10000, replay_memory_max_size=100000, ep_verbose=False, exp_verbose=True, batch_size=64,
                  upload_last_exp=False, double_dqn=False, target_params_update_period_steps=1, gym_api_key="",
-                 gym_algorithm_id=None, checkpoints_dir=None, min_avg_rwd=-110):
+                 gym_algorithm_id=None, checkpoints_dir=None, min_avg_rwd=-110, replay_period_steps=1,
+                 per_proportional_prioritization=False):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
         self.gym_stats_dir = None
@@ -33,6 +36,7 @@ class ExperimentsManager:
         self.learning_rate = learning_rate
         self.decay_lr = decay_lr
         self.max_step = max_step
+        self.replay_period_steps = replay_period_steps
         self.replay_memory_max_size = replay_memory_max_size
         self.ep_verbose = ep_verbose  # Whether or not to print progress during episodes
         self.exp_verbose = exp_verbose  # Whether or not to print progress during experiments
@@ -43,6 +47,13 @@ class ExperimentsManager:
         self.gym_algorithm_id = gym_algorithm_id
         self.checkpoints_dir = checkpoints_dir
         self.checkpoints_dir_current = checkpoints_dir
+
+        # Prioritized Experience Replay parameters
+        self.per_proportional_prioritization = per_proportional_prioritization  # Flavour of Prioritized Experience Rep.
+        self.prio_max = 0
+        self.per_epsilon = 1E-6
+        self.per_alpha = 0.6
+        self.beta0 = 0.4
 
         self.agent = None
         self.memory = None  # Experience replay memory
@@ -93,7 +104,11 @@ class ExperimentsManager:
         loss_v = 0
         if len(self.memory.memory) > self.batch_size:
             # Extract a batch of random transitions from the replay memory
-            states_b, actions_b, rewards_b, states_n_b, done_b = zip(*self.memory.sample(self.batch_size))
+            if self.per_proportional_prioritization:
+                raise NotImplementedError("PER not yet implemented in Double DQN.")
+            else:
+                experience = self.memory.sample(self.batch_size)
+            states_b, actions_b, rewards_b, states_n_b, done_b = zip(*experience)
             states_b = np.array(states_b)
             actions_b = np.array(actions_b)
             rewards_b = np.array(rewards_b)
@@ -115,9 +130,13 @@ class ExperimentsManager:
     def __train_on_experience(self):
         # DQN Experience Replay
         loss_v = 0
-        if len(self.memory.memory) > self.batch_size:
+        if self.memory.n_entries >= self.batch_size:
             # Extract a batch of random transitions from the replay memory
-            states_b, actions_b, rewards_b, states_n_b, done_b = zip(*self.memory.sample(self.batch_size))
+            if self.per_proportional_prioritization:
+                idx, experience = self.memory.sample(self.batch_size)
+            else:
+                experience = self.memory.sample(self.batch_size)
+            states_b, actions_b, rewards_b, states_n_b, done_b = zip(*experience)
             states_b = np.array(states_b)
             actions_b = np.array(actions_b)
             rewards_b = np.array(rewards_b)
@@ -134,8 +153,19 @@ class ExperimentsManager:
             for j, action in enumerate(actions_b):
                 targets[j, action] = targets_b[j]
 
-            loss_v = self.agent.train(states_b, targets)
+            loss_v, errors = self.agent.train(states_b, targets)
+            errors = errors[np.arange(len(errors)), actions_b]
+
+            if self.per_proportional_prioritization:  # Update transition priorities
+                priorities = self.error2priority(errors)
+                for i in range(self.batch_size):
+                    self.memory.update(idx[i], priorities[i])
+                self.prio_max = max(priorities.max(), self.prio_max)
+
         return loss_v
+
+    def error2priority(self, errors):
+        return (np.abs(errors) + self.per_epsilon) ** self.per_alpha
 
     def __print_experiment_progress(self):
         if self.exp_verbose:
@@ -183,12 +213,17 @@ class ExperimentsManager:
             total_reward += reward
 
             if self.memory is not None:
-                self.memory.add((state, action, reward, state_next, done))
+                experience = (state, action, reward, state_next, done)
+                if self.per_proportional_prioritization:
+                    self.memory.add(max(self.prio_max, self.per_epsilon), experience)
+                else:
+                    self.memory.add(experience)
                 if train:
-                    if self.double_dqn:
-                        loss_v = self.__double_dqn_train()
-                    else:
-                        loss_v = self.__train_on_experience()
+                    if self.global_step % self.replay_period_steps == 0:
+                        if self.double_dqn:
+                            loss_v = self.__double_dqn_train()
+                        else:
+                            loss_v = self.__train_on_experience()
             else:
                 raise NotImplementedError("Please provide an Experience Replay memory")
 
@@ -248,13 +283,14 @@ class ExperimentsManager:
             layers_size += "-"+str(s)
         layers_size += "-"+str(n_actions)
 
-        exp_conf_str = "{}_{}_Disc{:1.3e}_DecE{:1.2e}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
-                       "DDQN{}_RepMm{:1.1e}_BS{}_NEx{}_NEp{}_PmsUp{}"
+        exp_conf_str = "{}_{}_Disc{:1.2f}_DecE{:1.2e}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
+                       "DDQN{}_RepMm{:1.1e}_BS{}_NEx{}_NEp{}_PmsUp{}_K{}_PER{}"
         self.exps_conf_str = exp_conf_str.format(time.strftime("%Y_%m_%d__%H_%M_%S"), layers_size, self.discount,
                                                  self.decay_eps, self.eps_min, self.learning_rate,
                                                  1 if self.decay_lr else 0, self.max_step, 1 if self.double_dqn else 0,
                                                  self.replay_memory_max_size, self.batch_size, n_exps, n_ep,
-                                                 self.target_params_update_period_steps)
+                                                 self.target_params_update_period_steps, self.replay_period_steps,
+                                                 1 if self.per_proportional_prioritization else 0)
 
     def __create_figures_directory(self):
         if self.figures_dir is not None:
@@ -321,7 +357,10 @@ class ExperimentsManager:
             self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
                                         summaries_path_current=self.summaries_path_current)
 
-            self.memory = ReplayMemory(max_size=self.replay_memory_max_size)
+            if self.per_proportional_prioritization:
+                self.memory = SumTree(self.replay_memory_max_size)
+            else:
+                self.memory = DoubleEndedQueue(max_size=self.replay_memory_max_size)
 
             self.run_experiment(env, n_ep, stop_training_min_avg_rwd)   # This is where the action happens
 
@@ -452,12 +491,12 @@ class ExperimentsManager:
             plt.title("Value functions for experiment {:2d}".format(self.exp))
 
             if self.figures_dir is not None:
-                fig_savepath = os.path.join(self.figures_dir, "Experiment{}_ValueFunctions.png".format(self.exp))
+                fig_savepath = os.path.join(self.figures_dir, "Exp{}_ValueFuncs.png".format(self.exp))
                 plt.savefig(fig_savepath)
                 if figures_format is not None:
                     try:
                         fig_savepath = os.path.join(self.figures_dir,
-                                                    "Experiment{}_ValueFunctions.{}".format(self.exp, figures_format))
+                                                    "Exp{}_ValueFuncs.{}".format(self.exp, figures_format))
                         plt.savefig(fig_savepath, format=figures_format)
                     except:
                         print("Error while saving figure in {} format.".format(figures_format))
