@@ -48,11 +48,10 @@ class ValueFunctionDQN:
                 self.biases.append(tf.get_variable(name="b" + str(l), shape=[self.layers_size[l + 1]],
                                                    initializer=tf.constant_initializer(0.0)))
 
-                self.weights_old.append(tf.get_variable(name="w-" + str(l), shape=[self.layers_size[l],
-                                                                                   self.layers_size[l + 1]],
-                                                        initializer=tf.contrib.layers.xavier_initializer()))
-                self.biases_old.append(tf.get_variable(name="b-" + str(l), shape=[self.layers_size[l + 1]],
-                                                       initializer=tf.constant_initializer(0.0)))
+                self.weights_old.append(tf.get_variable(name="w-" + str(l),
+                                                        initializer=self.weights[l].initialized_value()))
+                self.biases_old.append(tf.get_variable(name="b-" + str(l),
+                                                       initializer=self.biases[l].initialized_value()))
 
             if summaries_path is not None:
                 with tf.name_scope('params_summaries'):
