@@ -369,7 +369,7 @@ class ExperimentsManager:
                                               summaries_path=self.summaries_path_current,
                                               reset_default_graph=True,
                                               checkpoints_dir=self.checkpoints_dir_current,
-                                              weight_gradients=self.per_apply_importance_sampling)
+                                              apply_wis=self.per_apply_importance_sampling)
 
             self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
                                         summaries_path_current=self.summaries_path_current)
