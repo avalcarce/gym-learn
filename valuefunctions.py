@@ -84,6 +84,12 @@ class ValueFunctionDQN:
 
             self.init_op = tf.global_variables_initializer()
 
+            # Operations to update the target Q network
+            self.update_ops = []
+            for l in range(len(self.layers_size) - 1):
+                self.update_ops.append(self.weights_old[l].assign(self.weights[l]))
+                self.update_ops.append(self.biases_old[l].assign(self.biases[l]))
+
             if self.summaries_path is not None:
                 self.variable_summaries(self.loss, "loss", scalar_only=True)
                 self.variable_summaries(self.learning_rate, "learning_rate", scalar_only=True)
@@ -197,13 +203,7 @@ class ValueFunctionDQN:
 
     def update_old_params(self):
         self.init_tf_session()  # Make sure the Tensorflow session exists
-
-        update_ops = []
-        for l in range(len(self.layers_size) - 1):
-            update_ops.append(self.weights_old[l].assign(self.weights[l]))
-            update_ops.append(self.biases_old[l].assign(self.biases[l]))
-
-        self.session.run(update_ops)
+        self.session.run(self.update_ops)
 
     def close_summary_file(self):
         if self.summaries_path is not None:

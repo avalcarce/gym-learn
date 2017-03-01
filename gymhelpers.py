@@ -148,10 +148,7 @@ class ExperimentsManager:
             states_n_b = np.array(states_n_b)
             done_b = np.array(done_b).astype(int)
 
-            if self.target_params_update_period_steps == 1:  # This is avoid having to copy the old params every step
-                q_n_b = self.agent.predict_q_values(states_n_b)  # Action values on the next state
-            else:
-                q_n_b = self.agent.predict_q_values(states_n_b, use_old_params=True)  # Action values on the next state
+            q_n_b = self.agent.predict_q_values(states_n_b, use_old_params=True)  # Action values on the next state
             targets_b = rewards_b + (1. - done_b) * self.discount * np.amax(q_n_b, axis=1)
 
             targets = self.agent.predict_q_values(states_b)
@@ -207,11 +204,10 @@ class ExperimentsManager:
         for self.step in range(self.max_step):
 
             # Maybe update the target estimator
-            if self.target_params_update_period_steps > 1:
-                if self.global_step % self.target_params_update_period_steps == 0:
-                    self.agent.value_func.update_old_params()
-                    if self.ep_verbose:
-                        print("Copied model parameters to target network.")
+            if self.global_step % self.target_params_update_period_steps == 0:
+                self.agent.value_func.update_old_params()
+                if self.ep_verbose:
+                    print("Copied model parameters to target network.")
 
             self.anneal_per_importance_sampling()
 
