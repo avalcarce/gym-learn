@@ -295,15 +295,16 @@ class ExperimentsManager:
             layers_size += "-"+str(s)
         layers_size += "-"+str(n_actions)
 
-        exp_conf_str = "{}_{}_Disc{:1.2f}_DecE{:1.2e}_EMin{:1.2e}_LR{:1.2e}_DecLR{}_MaxStp{}_" +\
-                       "DDQN{}_RepMm{:1.1e}_BS{}_NEx{}_NEp{}_PmsUp{}_K{}_PER{}_IS{}"
-        self.exps_conf_str = exp_conf_str.format(time.strftime("%Y_%m_%d__%H_%M_%S"), layers_size, self.discount,
+        exp_conf_str = "{}_{}_D{:1.2f}_DE{:1.2e}_Em{:1.2e}_LR{:1.2e}_DL{}_MS{}_" +\
+                       "DDQN{}_N{:1.1e}_BS{}_NEx{}_NEp{}_C{}_K{}_PER{}_IS{}_a{}_b0{}"
+        self.exps_conf_str = exp_conf_str.format(time.strftime("%Y_%m_%d_%H_%M_%S"), layers_size, self.discount,
                                                  self.decay_eps, self.eps_min, self.learning_rate,
                                                  1 if self.decay_lr else 0, self.max_step, 1 if self.double_dqn else 0,
                                                  self.replay_memory_max_size, self.batch_size, n_exps, n_ep,
                                                  self.target_params_update_period_steps, self.replay_period_steps,
                                                  1 if self.per_proportional_prioritization else 0,
-                                                 1 if self.per_apply_importance_sampling else 0)
+                                                 1 if self.per_apply_importance_sampling else 0,
+                                                 self.per_alpha, self.per_beta0)
 
     def __create_figures_directory(self):
         if self.figures_dir is not None:
