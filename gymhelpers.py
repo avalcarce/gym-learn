@@ -21,7 +21,8 @@ class ExperimentsManager:
                  max_step=10000, replay_memory_max_size=100000, ep_verbose=False, exp_verbose=True, batch_size=64,
                  upload_last_exp=False, double_dqn=False, target_params_update_period_steps=1, gym_api_key="",
                  gym_algorithm_id=None, checkpoints_dir=None, min_avg_rwd=-110, replay_period_steps=1,
-                 per_proportional_prioritization=False, per_apply_importance_sampling=False):
+                 per_proportional_prioritization=False, per_apply_importance_sampling=False, per_alpha=0.6,
+                 per_beta0=0.4):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
         self.gym_stats_dir = None
@@ -52,8 +53,8 @@ class ExperimentsManager:
         self.per_apply_importance_sampling = per_apply_importance_sampling
         self.prio_max = 0
         self.per_epsilon = 1E-6
-        self.per_alpha = 0.6
-        self.per_beta0 = 0.4
+        self.per_alpha = per_alpha
+        self.per_beta0 = per_beta0
         self.per_beta = self.per_beta0
 
         self.agent = None
