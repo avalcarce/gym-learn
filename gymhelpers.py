@@ -101,56 +101,48 @@ class ExperimentsManager:
                                                        np.mean(self.step_durations_s[self.ep, 0:self.step]) * 1000,
                                                        loss_v))
 
-    def __double_dqn_train(self):
-        # DQN Experience Replay
-        loss_v = 0
-        if len(self.memory.memory) > self.batch_size:
-            # Extract a batch of random transitions from the replay memory
-            if self.per_proportional_prioritization:
-                raise NotImplementedError("PER not yet implemented in Double DQN.")
-            else:
-                experience = self.memory.sample(self.batch_size)
-            states_b, actions_b, rewards_b, states_n_b, done_b = zip(*experience)
-            states_b = np.array(states_b)
-            actions_b = np.array(actions_b)
-            rewards_b = np.array(rewards_b)
-            states_n_b = np.array(states_n_b)
-            done_b = np.array(done_b).astype(int)
+    def __retrieve_experience(self):
+        idx = None
+        priorities = None
+        w = None
 
-            q_n_b = self.agent.predict_q_values(states_n_b)  # Action values on the arriving state
-            best_a = np.argmax(q_n_b, axis=1)
-            q_n_target_b = self.agent.predict_q_values(states_n_b, use_old_params=True)
-            targets_b = rewards_b + (1. - done_b) * self.discount * q_n_target_b[np.arange(self.batch_size), best_a]
+        # Extract a batch of random transitions from the replay memory
+        if self.per_proportional_prioritization:
+            idx, priorities, experience = self.memory.sample(self.batch_size)
+            if self.per_apply_importance_sampling:
+                sampling_probabilities = priorities / self.memory.total()
+                w = np.power(self.memory.n_entries * sampling_probabilities, -self.per_beta)
+                w = w / w.max()
+        else:
+            experience = self.memory.sample(self.batch_size)
 
-            targets = self.agent.predict_q_values(states_b)
-            for j, action in enumerate(actions_b):
-                targets[j, action] = targets_b[j]
+        return idx, priorities, w, experience
 
-            loss_v = self.agent.train(states_b, targets)
-        return loss_v
+    @staticmethod
+    def __format_experience(experience):
+        states_b, actions_b, rewards_b, states_n_b, done_b = zip(*experience)
+        states_b = np.array(states_b)
+        actions_b = np.array(actions_b)
+        rewards_b = np.array(rewards_b)
+        states_n_b = np.array(states_n_b)
+        done_b = np.array(done_b).astype(int)
+
+        return states_b, actions_b, rewards_b, states_n_b, done_b
 
     def __train_on_experience(self):
-        # DQN Experience Replay
         loss_v = 0
         if self.memory.n_entries >= self.batch_size:
-            # Extract a batch of random transitions from the replay memory
-            if self.per_proportional_prioritization:
-                idx, priorities, experience = self.memory.sample(self.batch_size)
-                if self.per_apply_importance_sampling:
-                    sampling_probabilities = priorities/self.memory.total()
-                    w = np.power(self.memory.n_entries*sampling_probabilities, -self.per_beta)
-                    w = w/w.max()
-            else:
-                experience = self.memory.sample(self.batch_size)
-            states_b, actions_b, rewards_b, states_n_b, done_b = zip(*experience)
-            states_b = np.array(states_b)
-            actions_b = np.array(actions_b)
-            rewards_b = np.array(rewards_b)
-            states_n_b = np.array(states_n_b)
-            done_b = np.array(done_b).astype(int)
+            idx, priorities, w, experience = self.__retrieve_experience()
+            states_b, actions_b, rewards_b, states_n_b, done_b = self.__format_experience(experience)
 
-            q_n_b = self.agent.predict_q_values(states_n_b, use_old_params=True)  # Action values on the next state
-            targets_b = rewards_b + (1. - done_b) * self.discount * np.amax(q_n_b, axis=1)
+            if self.double_dqn:
+                q_n_b = self.agent.predict_q_values(states_n_b)  # Action values on the arriving state
+                best_a = np.argmax(q_n_b, axis=1)
+                q_n_target_b = self.agent.predict_q_values(states_n_b, use_old_params=True)
+                targets_b = rewards_b + (1. - done_b) * self.discount * q_n_target_b[np.arange(self.batch_size), best_a]
+            else:
+                q_n_b = self.agent.predict_q_values(states_n_b, use_old_params=True)  # Action values on the next state
+                targets_b = rewards_b + (1. - done_b) * self.discount * np.amax(q_n_b, axis=1)
 
             targets = self.agent.predict_q_values(states_b)
             for j, action in enumerate(actions_b):
@@ -231,10 +223,7 @@ class ExperimentsManager:
                     self.memory.add(experience)
                 if train:
                     if self.global_step % self.replay_period_steps == 0:
-                        if self.double_dqn:
-                            loss_v = self.__double_dqn_train()
-                        else:
-                            loss_v = self.__train_on_experience()
+                        loss_v = self.__train_on_experience()
             else:
                 raise NotImplementedError("Please provide an Experience Replay memory")
 
