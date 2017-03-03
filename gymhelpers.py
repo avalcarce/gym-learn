@@ -307,6 +307,15 @@ class ExperimentsManager:
                     else:
                         break
 
+    def get_environment_actions(self, env):
+        if isinstance(env.action_space, gym.spaces.Box):
+            raise NotImplementedError("Continuous action spaces are not supported yet.")
+        elif isinstance(env.action_space, gym.spaces.Discrete):
+            n_actions = env.action_space.n
+        else:
+            raise NotImplementedError("{} action spaces are not supported yet.".format(type(env.action_space)))
+        return n_actions
+
     def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True, figures_format=None):
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
         self.Loss_per_ep_v = np.zeros((n_exps, n_ep))
@@ -320,7 +329,7 @@ class ExperimentsManager:
 
         # Create environment
         env = gym.make(self.env_name)
-        n_actions = env.action_space.n
+        n_actions = self.get_environment_actions(env)
         state_dim = env.observation_space.high.shape[0]
 
         self.__build_experiments_conf_str(n_exps, n_ep, n_actions, state_dim)
@@ -331,7 +340,6 @@ class ExperimentsManager:
             print(self.exps_conf_str)
 
             env = gym.make(self.env_name)  # Create new environment
-            assert n_actions == env.action_space.n
             assert state_dim == env.observation_space.high.shape[0]
 
             if self.upload_last_exp and self.exp == n_exps-1:
