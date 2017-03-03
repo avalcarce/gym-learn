@@ -382,6 +382,7 @@ class ExperimentsManager:
 
         self.calculate_avg_rwd()
         self.plot_rwd_averages(n_exps, figures_format=figures_format)
+        self.print_summary()
         if plot_results:
             plt.show()
 
@@ -448,8 +449,6 @@ class ExperimentsManager:
             plt.plot(eps, self.rwd_exps_avg_ma, label="100-episode moving average")
             plt.plot(eps, self.rwd_exps_avg_percentile5, label="5th percentile over 100 episodes")
             plt.legend(loc='lower right')
-            print("Average final reward: {:3.2f} (std={:3.2f}).\n".format(self.rwd_exps_avg_ma[-1],
-                                                                          self.rwd_exps_avg_movstd[-1]))
             plt.title("Final average reward: {:3.2f} (std={:3.2f})".format(self.rwd_exps_avg_ma[-1],
                                                                            self.rwd_exps_avg_movstd[-1]))
 
@@ -481,6 +480,15 @@ class ExperimentsManager:
                     except:
                         print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
+
+    def print_summary(self):
+        n_eps = np.argmax(self.rwd_exps_avg_ma >= self.min_avg_rwd)
+        print("Average final reward: {:3.2f} (std={:3.2f}).\n".format(self.rwd_exps_avg_ma[-1],
+                                                                      self.rwd_exps_avg_movstd[-1]))
+        if n_eps is None:
+            print("The 100-episode moving average never reached {}.".format(self.min_avg_rwd))
+        else:
+            print("The 100-episode moving average reached {} after {} episodes.".format(self.min_avg_rwd, n_eps))
 
     def plot_value_function(self, figures_format=None):
         if self.figures_dir is not None:
