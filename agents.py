@@ -8,15 +8,20 @@ class AgentEpsGreedy:
         self.eps = eps
         self.summaries_path_current = summaries_path_current
         self.current_value = None  # Current value of the value function (i.e. expected discounted return)
+        self.explore = True
 
     def act(self, state):
         action_values = self.value_func.predict([state])[0]
 
-        policy = np.ones(self.n_actions) * self.eps / self.n_actions
         a_max = np.argmax(action_values)
-        policy[a_max] += 1. - self.eps
 
-        a = np.random.choice(self.n_actions, p=policy)
+        if self.explore:
+            policy = np.ones(self.n_actions) * self.eps / self.n_actions
+            policy[a_max] += 1. - self.eps
+            a = np.random.choice(self.n_actions, p=policy)
+        else:
+            a = a_max
+
         self.current_value = action_values[a]
         return a
 

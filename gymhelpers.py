@@ -253,7 +253,8 @@ class ExperimentsManager:
             if stop_training_min_avg_rwd is not None:
                 if train and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
                     train = False
-                    print("Minimum average reward reached. Stopping training.")
+                    self.agent.explore = False
+                    print("Minimum average reward reached. Stop training and exploration.")
 
             if self.Avg_Rwd_per_ep[self.exp, self.ep] >= self.min_avg_rwd:
                 self.n_eps_to_reach_min_avg_rwd[self.exp] = np.minimum(self.ep,
