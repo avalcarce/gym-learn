@@ -341,6 +341,7 @@ class ExperimentsManager:
             print(self.exps_conf_str)
 
             env = gym.make(self.env_name)  # Create new environment
+            env.seed(self.exp)
             assert state_dim == env.observation_space.high.shape[0]
 
             if self.upload_last_exp and self.exp == n_exps-1:
