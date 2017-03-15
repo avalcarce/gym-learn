@@ -1,4 +1,4 @@
-# openai_playground
+# gym-learn
 This collection of Python modules implements some Reinforcement Learning algorithms, most notably **Deep Q Networks (DQN)** and **Prioritized Experience Replay (PER)**, where the proportional prioritization variant has been implemented.. It has been built to solve [OpenAI Gym environments](https://gym.openai.com/), although it has only been tested on classic control environments with discrete action sets.
 
 The code supports a variety of hyper parameters, that are usually tuned to particular environments. Bayesian optimization with [Scikit-Optimize](https://scikit-optimize.github.io/) is a simple way of tuning those hyper parameters.
