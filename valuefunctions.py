@@ -35,6 +35,8 @@ class ValueFunctionDQN:
         if reset_default_graph:
             tf.reset_default_graph()
 
+        self.graph = tf.get_default_graph()
+
         # Build Tensorflow graph
         with tf.variable_scope(self.scope):
             # Inputs, weights, biases and targets of the ANN
@@ -106,7 +108,7 @@ class ValueFunctionDQN:
             self.summaries_path += "_{}".format(self.scope)
             if not os.path.exists(self.summaries_path):
                 os.makedirs(self.summaries_path)
-            self.train_writer = tf.summary.FileWriter(self.summaries_path, graph=tf.get_default_graph())
+            self.train_writer = tf.summary.FileWriter(self.summaries_path, graph=self.graph)
         else:
             self.merged_summaries = None
 
@@ -148,7 +150,7 @@ class ValueFunctionDQN:
 
     def init_tf_session(self):
         if self.session is None:
-            self.session = tf.Session()
+            self.session = tf.Session(graph=self.graph)
             self.session.run(self.init_op)  # Global Variables Initializer (init op)
 
     def predict(self, states, use_old_params=False):
