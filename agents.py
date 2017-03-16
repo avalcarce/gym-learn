@@ -2,11 +2,10 @@ import numpy as np
 
 
 class AgentEpsGreedy:
-    def __init__(self, n_actions, value_function_model, eps=1., summaries_path_current=None):
+    def __init__(self, n_actions, value_function_model, eps=1.):
         self.n_actions = n_actions
         self.value_func = value_function_model
         self.eps = eps
-        self.summaries_path_current = summaries_path_current
         self.current_value = None  # Current value of the value function (i.e. expected discounted return)
         self.explore = True
 
