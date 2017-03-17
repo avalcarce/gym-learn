@@ -51,14 +51,11 @@ class ExperimentsManager:
         # Prioritized Experience Replay parameters. See https://arxiv.org/pdf/1511.05952.pdf
         self.per_proportional_prioritization = per_proportional_prioritization  # Flavour of Prioritized Experience Rep.
         self.per_apply_importance_sampling = per_apply_importance_sampling
-        self.prio_max = 0
-        self.per_epsilon = 1E-6
         self.per_alpha = per_alpha
         self.per_beta0 = per_beta0
         self.per_beta = self.per_beta0
 
         self.agent = None
-        self.memory = None  # Experience replay memory
         self.batch_size = batch_size
         self.agent_value_function_hidden_layers_size = agent_value_function_hidden_layers_size
         self.double_dqn = double_dqn
@@ -101,70 +98,6 @@ class ExperimentsManager:
                                                        np.mean(self.step_durations_s[self.ep, 0:self.step]) * 1000,
                                                        loss_v))
 
-    def __retrieve_experience(self):
-        idx = None
-        priorities = None
-        w = None
-
-        # Extract a batch of random transitions from the replay memory
-        if self.per_proportional_prioritization:
-            idx, priorities, experience = self.memory.sample(self.batch_size)
-            if self.per_apply_importance_sampling:
-                sampling_probabilities = priorities / self.memory.total()
-                w = np.power(self.memory.n_entries * sampling_probabilities, -self.per_beta)
-                w = w / w.max()
-        else:
-            experience = self.memory.sample(self.batch_size)
-
-        return idx, priorities, w, experience
-
-    @staticmethod
-    def __format_experience(experience):
-        states_b, actions_b, rewards_b, states_n_b, done_b = zip(*experience)
-        states_b = np.array(states_b)
-        actions_b = np.array(actions_b)
-        rewards_b = np.array(rewards_b)
-        states_n_b = np.array(states_n_b)
-        done_b = np.array(done_b).astype(int)
-
-        return states_b, actions_b, rewards_b, states_n_b, done_b
-
-    def __train_on_experience(self):
-        loss_v = 0
-        if self.memory.n_entries >= self.batch_size:
-            idx, priorities, w, experience = self.__retrieve_experience()
-            states_b, actions_b, rewards_b, states_n_b, done_b = self.__format_experience(experience)
-
-            if self.double_dqn:
-                q_n_b = self.agent.predict_q_values(states_n_b)  # Action values on the arriving state
-                best_a = np.argmax(q_n_b, axis=1)
-                q_n_target_b = self.agent.predict_q_values(states_n_b, use_old_params=True)
-                targets_b = rewards_b + (1. - done_b) * self.discount * q_n_target_b[np.arange(self.batch_size), best_a]
-            else:
-                q_n_b = self.agent.predict_q_values(states_n_b, use_old_params=True)  # Action values on the next state
-                targets_b = rewards_b + (1. - done_b) * self.discount * np.amax(q_n_b, axis=1)
-
-            targets = self.agent.predict_q_values(states_b)
-            for j, action in enumerate(actions_b):
-                targets[j, action] = targets_b[j]
-
-            if self.per_apply_importance_sampling:
-                loss_v, errors = self.agent.train(states_b, targets, w=w)
-            else:
-                loss_v, errors = self.agent.train(states_b, targets)
-            errors = errors[np.arange(len(errors)), actions_b]
-
-            if self.per_proportional_prioritization:  # Update transition priorities
-                priorities = self.error2priority(errors)
-                for i in range(self.batch_size):
-                    self.memory.update(idx[i], priorities[i])
-                self.prio_max = max(priorities.max(), self.prio_max)
-
-        return loss_v
-
-    def error2priority(self, errors):
-        return np.power(np.abs(errors) + self.per_epsilon, self.per_alpha)
-
     def __print_experiment_progress(self):
         if self.exp_verbose:
             rwd = self.Rwd_per_ep_v[self.exp, self.ep]
@@ -184,10 +117,6 @@ class ExperimentsManager:
                 self.exp_progress_msg.format(self.exp, self.ep, rwd, avg_rwd, self.n_avg_ep, self.min_avg_rwd,
                                              n_solved_eps, loss, avg_loss, self.agent.eps*100, duration_ms))
 
-    def anneal_per_importance_sampling(self):
-        if self.per_proportional_prioritization and self.per_apply_importance_sampling:
-            self.per_beta = self.per_beta0 + self.ep*(1-self.per_beta0)/self.n_ep
-
     def run_episode(self, env, train=True):
         state = env.reset()
         done = False
@@ -202,7 +131,7 @@ class ExperimentsManager:
                 if self.ep_verbose:
                     print("Copied model parameters to target network.")
 
-            self.anneal_per_importance_sampling()
+            self.agent.anneal_per_importance_sampling(self.step, self.max_step)
 
             t = time.time()
             self.__print_episode_progress(loss_v)
@@ -215,17 +144,9 @@ class ExperimentsManager:
             state_next, reward, done, info = env.step(action)
             total_reward += reward
 
-            if self.memory is not None:
-                experience = (state, action, reward, state_next, done)
-                if self.per_proportional_prioritization:
-                    self.memory.add(max(self.prio_max, self.per_epsilon), experience)
-                else:
-                    self.memory.add(experience)
-                if train:
-                    if self.global_step % self.replay_period_steps == 0:
-                        loss_v = self.__train_on_experience()
-            else:
-                raise NotImplementedError("Please provide an Experience Replay memory")
+            self.agent.save_experience(state, action, reward, state_next, done)
+            if train and self.global_step % self.replay_period_steps == 0:
+                loss_v = self.agent.train_on_experience(self.batch_size, self.discount, double_dqn=self.double_dqn)
 
             state = copy.copy(state_next)
             self.step_durations_s[self.ep, self.step] = time.time() - t  # Time elapsed during this step
@@ -369,12 +290,14 @@ class ExperimentsManager:
                                               apply_wis=self.per_apply_importance_sampling)
 
             self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
-                                        summaries_path_current=self.summaries_path_current)
+                                        per_proportional_prioritization=self.per_proportional_prioritization,
+                                        per_apply_importance_sampling=self.per_apply_importance_sampling,
+                                        per_alpha=self.per_alpha, per_beta0=self.per_beta0)
 
             if self.per_proportional_prioritization:
-                self.memory = SumTree(self.replay_memory_max_size)
+                self.agent.memory = SumTree(self.replay_memory_max_size)
             else:
-                self.memory = DoubleEndedQueue(max_size=self.replay_memory_max_size)
+                self.agent.memory = DoubleEndedQueue(max_size=self.replay_memory_max_size)
 
             self.run_experiment(env, n_ep, stop_training_min_avg_rwd)   # This is where the action happens
 

@@ -210,3 +210,9 @@ class ValueFunctionDQN:
     def close_summary_file(self):
         if self.summaries_path is not None:
             self.train_writer.close()
+
+
+class DuelingNetwork:
+    def __init__(self):
+        a = 1
+        # TODO
