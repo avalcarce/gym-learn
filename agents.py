@@ -9,6 +9,7 @@ class ExperienceReplayAgent:
                  per_apply_importance_sampling=False, per_alpha=0.2, per_beta0=0.4):
         # Experience Replay parameters. See https://arxiv.org/pdf/1511.05952.pdf
         self.memory = None  # Experience replay memory
+        self.total_reward = 0
         self.per_proportional_prioritization = per_proportional_prioritization
         self.per_apply_importance_sampling = per_apply_importance_sampling
         self.per_alpha = per_alpha
@@ -67,6 +68,7 @@ class AgentEpsGreedy(ExperienceReplayAgent):
         self.explore = True                     # Whether to explore or not
         self.state = None                       # The current state the agent is on
         self.loss_v = 0                         # Loss value of the last training epoch
+        self.step = 0                           # Number of times the agent's act method has been successfully invoked.
 
     def act(self, state=None):
         """
@@ -94,6 +96,7 @@ class AgentEpsGreedy(ExperienceReplayAgent):
             a = a_max
 
         self.current_value = action_values[a]
+        self.step += 1
         return a
 
     def train(self, states, targets, w=None):

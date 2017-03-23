@@ -118,9 +118,9 @@ class ExperimentsManager:
                                              n_solved_eps, loss, avg_loss, self.agent.eps*100, duration_ms))
 
     def run_episode(self, env, train=True):
-        state = env.reset()
+        self.agent.state = env.reset()
         done = False
-        total_reward = 0
+        self.agent.total_reward = 0
         loss_v = 0
 
         for self.step in range(self.max_step):
@@ -138,19 +138,19 @@ class ExperimentsManager:
 
             if done:
                 break
-            action = self.agent.act(state)
+            action = self.agent.act(self.agent.state)
             self.agent_value_function[self.exp, self.ep, self.step] = self.agent.current_value
             self.global_step += 1
             state_next, reward, done, info = env.step(action)
-            total_reward += reward
+            self.agent.total_reward += reward
 
-            self.agent.save_experience(state, action, reward, state_next, done)
+            self.agent.save_experience(self.agent.state, action, reward, state_next, done)
             if train and self.global_step % self.replay_period_steps == 0:
                 loss_v = self.agent.train_on_experience(self.batch_size, self.discount, double_dqn=self.double_dqn)
 
-            state = copy.copy(state_next)
+            self.agent.state = copy.copy(state_next)
             self.step_durations_s[self.ep, self.step] = time.time() - t  # Time elapsed during this step
-        return loss_v, total_reward
+        return loss_v, self.agent.total_reward
 
     def run_experiment(self, env, n_ep, stop_training_min_avg_rwd=None):
         self.n_ep = n_ep
