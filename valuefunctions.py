@@ -20,6 +20,8 @@ class ValueFunctionDQN:
         self.biases = []
         self.weights_old = []
         self.biases_old = []
+        self.trained_w = []
+        self.trained_b = []
         self.learning_rate = learning_rate
         self.train_batch_size = train_batch_size
         self.n_train_epochs = 0
@@ -55,19 +57,25 @@ class ValueFunctionDQN:
                 self.biases_old.append(tf.get_variable(name="b-" + str(l),
                                                        initializer=self.biases[l].initialized_value()))
 
+                # Operations to read the trained variables
+                self.trained_w.append(tf.get_collection(key=tf.GraphKeys.TRAINABLE_VARIABLES,
+                                                        scope=self.scope + "/w" + str(l)))
+                self.trained_b.append(tf.get_collection(key=tf.GraphKeys.TRAINABLE_VARIABLES,
+                                                        scope=self.scope + "/b" + str(l)))
+
             if summaries_path is not None:
                 with tf.name_scope('params_summaries'):
                     for l in range(len(self.layers_size) - 1):
-                        self.variable_summaries(self.weights[l], "w" + str(l), histogram=True)
-                        self.variable_summaries(self.biases[l], "b" + str(l), histogram=True)
+                        self.__variable_summaries(self.weights[l], "w" + str(l), histogram=True)
+                        self.__variable_summaries(self.biases[l], "b" + str(l), histogram=True)
 
             # Interconnection of the various ANN nodes
-            self.prediction = self.model(self.x)
-            self.prediction_with_old_params = self.model(self.x, use_old_params=True)
+            self.prediction = self.__model(self.x)
+            self.prediction_with_old_params = self.__model(self.x, use_old_params=True)
 
             # Training calculations
             if huber_loss:
-                self.loss = self.huber_loss(self.train_targets, self.prediction)
+                self.loss = self.__huber_loss(self.train_targets, self.prediction)
             else:
                 self.E = tf.subtract(self.train_targets, self.prediction, name="Error")
                 self.SE = tf.square(self.E, name="SquaredError")
@@ -93,8 +101,8 @@ class ValueFunctionDQN:
                 self.update_ops.append(self.biases_old[l].assign(self.biases[l]))
 
             if self.summaries_path is not None:
-                self.variable_summaries(self.loss, "loss", scalar_only=True)
-                self.variable_summaries(self.learning_rate, "learning_rate", scalar_only=True)
+                self.__variable_summaries(self.loss, "loss", scalar_only=True)
+                self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True)
 
         if self.checkpoints_dir is not None:
             var_list = []
@@ -114,7 +122,7 @@ class ValueFunctionDQN:
 
         self.session = None
 
-    def model(self, x, use_old_params=False):
+    def __model(self, x, use_old_params=False):
         z = []
         hidden = [x]
         for l in range(len(self.layers_size)-2):
@@ -132,13 +140,13 @@ class ValueFunctionDQN:
             if self.summaries_path is not None:
                 with tf.name_scope('layers_summaries'):
                     for l in range(len(self.layers_size) - 1):
-                        self.variable_summaries(z[l], "z" + str(l))
-                        self.variable_summaries(hidden[l], "hidden" + str(l))
+                        self.__variable_summaries(z[l], "z" + str(l))
+                        self.__variable_summaries(hidden[l], "hidden" + str(l))
 
         return z[-1]  # Output layer has Identity units.
 
     @staticmethod
-    def huber_loss(targets, predictions):
+    def __huber_loss(targets, predictions):
         error = targets - predictions
         fn_choice_maker1 = (tf.to_int32(tf.sign(error + 1)) + 1) / 2
         fn_choice_maker2 = (tf.to_int32(tf.sign(-error + 1)) + 1) / 2
@@ -148,13 +156,13 @@ class ValueFunctionDQN:
         loss = tf.reduce_mean(sqr_contrib + abs_contrib)
         return loss
 
-    def init_tf_session(self):
+    def __init_tf_session(self):
         if self.session is None:
             self.session = tf.Session(graph=self.graph)
             self.session.run(self.init_op)  # Global Variables Initializer (init op)
 
     def predict(self, states, use_old_params=False):
-        self.init_tf_session()  # Make sure the Tensorflow session exists
+        self.__init_tf_session()  # Make sure the Tensorflow session exists
 
         feed_dict = {self.x: states}
         if use_old_params:
@@ -165,7 +173,7 @@ class ValueFunctionDQN:
         return q
 
     def train(self, states, targets, w=None):
-        self.init_tf_session()  # Make sure the Tensorflow session exists
+        self.__init_tf_session()  # Make sure the Tensorflow session exists
 
         feed_dict = {self.x: states, self.train_targets: targets}
         if self.apply_wis:
@@ -187,8 +195,17 @@ class ValueFunctionDQN:
         self.n_train_epochs += 1
         return values[0], values[2]
 
+    def read_learned_weights_and_biases(self):
+        self.__init_tf_session()  # Make sure the Tensorflow session exists
+
+        fetches = []
+        for l in range(len(self.layers_size) - 1):
+            fetches.append(self.trained_w[l])
+            fetches.append(self.trained_b[l])
+        return self.session.run(fetches)
+
     @staticmethod
-    def variable_summaries(var, name, histogram=False, scalar_only=False):
+    def __variable_summaries(var, name, histogram=False, scalar_only=False):
         """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
         if scalar_only:
             tf.summary.scalar(name, var)
@@ -204,7 +221,7 @@ class ValueFunctionDQN:
                 tf.summary.histogram(name+'_histogram', var)
 
     def update_old_params(self):
-        self.init_tf_session()  # Make sure the Tensorflow session exists
+        self.__init_tf_session()  # Make sure the Tensorflow session exists
         self.session.run(self.update_ops)
 
     def close_summary_file(self):
