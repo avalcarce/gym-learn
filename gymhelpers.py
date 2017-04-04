@@ -9,10 +9,9 @@ import copy
 import time
 from sys import platform
 from textwrap import wrap
-if platform == "linux" or platform == "linux2":
-    import matplotlib
-    matplotlib.use('Agg')  # This is to generate images without having a window appear.
 import matplotlib.pyplot as plt
+if platform == "linux" or platform == "linux2":
+    plt.switch_backend('Agg')  # This is to generate images without having a window appear.
 
 
 class ExperimentsManager:
