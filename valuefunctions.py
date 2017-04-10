@@ -7,7 +7,8 @@ import numpy as np
 class ValueFunctionDQN:
     def __init__(self, scope="MyValueFunctionEstimator", state_dim=2, n_actions=3, train_batch_size=64,
                  learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, huber_loss=False, summaries_path=None,
-                 reset_default_graph=False, checkpoints_dir=None, apply_wis=False):
+                 reset_default_graph=False, checkpoints_dir=None, apply_wis=False, checkpoint_save_period_epochs=40000,
+                 restoration_checkpoint=None):
         # Input check
         if hidden_layers_size is None:
             hidden_layers_size = [128, 64]  # Default ANN architecture
@@ -28,6 +29,9 @@ class ValueFunctionDQN:
         self.summaries_path = summaries_path
         self.train_writer = None
         self.checkpoints_dir = checkpoints_dir
+        self.checkpoint_pathname = os.path.join(self.checkpoints_dir, self.scope)
+        self.checkpoint_save_period_epochs = checkpoint_save_period_epochs
+        self.restoration_checkpoint = restoration_checkpoint
 
         # Apply Weighted Importance Sampling. See "Weighted importance sampling for off-policy learning with linear
         # function approximation". In Advances in Neural Information Processing Systems, pp. 3014–3022, 2014
@@ -104,7 +108,7 @@ class ValueFunctionDQN:
                 self.__variable_summaries(self.loss, "loss", scalar_only=True)
                 self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True)
 
-        if self.checkpoints_dir is not None:
+        if self.checkpoints_dir is not None or self.restoration_checkpoint is not None:
             var_list = []
             for l in range(len(self.layers_size) - 1):
                 var_list.append(self.weights[l])
@@ -161,6 +165,10 @@ class ValueFunctionDQN:
             self.session = tf.Session(graph=self.graph)
             self.session.run(self.init_op)  # Global Variables Initializer (init op)
 
+            if self.restoration_checkpoint is not None:
+                self.saver.restore(self.session, self.restoration_checkpoint)
+                print("Model restored from checkpoint at {}.".format(self.restoration_checkpoint))
+
     def predict(self, states, use_old_params=False):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
 
@@ -189,11 +197,15 @@ class ValueFunctionDQN:
         if self.summaries_path is not None and self.n_train_epochs % 2000 == 0:
             self.train_writer.add_summary(values[3], global_step=self.n_train_epochs)
 
-        if self.checkpoints_dir is not None and self.n_train_epochs % 40000 == 0:
-            self.saver.save(self.session, self.checkpoints_dir, global_step=self.global_step)
+        if self.checkpoints_dir is not None:
+            if self.n_train_epochs > 0 and self.n_train_epochs % self.checkpoint_save_period_epochs == 0:
+                self.save()
 
         self.n_train_epochs += 1
         return values[0], values[2]
+
+    def save(self):
+        self.saver.save(self.session, self.checkpoint_pathname, global_step=self.global_step)
 
     def read_learned_weights_and_biases(self):
         self.__init_tf_session()  # Make sure the Tensorflow session exists

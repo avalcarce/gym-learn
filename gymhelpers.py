@@ -2,7 +2,10 @@ from .utils import *
 from .agents import AgentEpsGreedy
 from .valuefunctions import ValueFunctionDQN
 from .datastructures import DoubleEndedQueue, SumTree
+from plot_utils import shadow_plot
 
+import sys
+import psutil
 import gym
 from gym import wrappers
 import copy
@@ -19,11 +22,12 @@ class ExperimentsManager:
                  figures_dir=None, discount=0.99, decay_eps=0.995, eps_min=0.0001, learning_rate=1E-4, decay_lr=False,
                  max_step=10000, replay_memory_max_size=100000, ep_verbose=False, exp_verbose=True, batch_size=64,
                  upload_last_exp=False, double_dqn=False, target_params_update_period_steps=1, gym_api_key="",
-                 gym_algorithm_id=None, checkpoints_dir=None, min_avg_rwd=-110, replay_period_steps=1,
+                 gym_algorithm_id=None, checkpoints_dir='ChkPts', min_avg_rwd=-110, replay_period_steps=1,
                  per_proportional_prioritization=False, per_apply_importance_sampling=False, per_alpha=0.6,
-                 per_beta0=0.4):
+                 per_beta0=0.4, render_environment=False, checkpoint_save_period_steps=None, restoration_checkpoint=None):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
+        self.render_environment = render_environment
         self.gym_stats_dir = None
         self.summaries_path = summaries_path
         self.summaries_path_current = summaries_path
@@ -46,6 +50,8 @@ class ExperimentsManager:
         self.gym_algorithm_id = gym_algorithm_id
         self.checkpoints_dir = checkpoints_dir
         self.checkpoints_dir_current = checkpoints_dir
+        self.checkpoint_save_period_steps = checkpoint_save_period_steps
+        self.restoration_checkpoint = restoration_checkpoint
 
         # Prioritized Experience Replay parameters. See https://arxiv.org/pdf/1511.05952.pdf
         self.per_proportional_prioritization = per_proportional_prioritization  # Flavour of Prioritized Experience Rep.
@@ -71,10 +77,12 @@ class ExperimentsManager:
         self.conf_msg = "\nEXECUTING EXPERIMENT {} OF {} IN ENVIRONMENT {}."
         self.episode_progress_msg = "Step {:5d}/{:5d}. Avg step duration: {:3.6f} ms." + \
                                     " Loss = {:3.2e}."
-        self.exp_progress_msg = "Exp {:3d}. Ep {:5d}, Rwd={:4.0f} (mean={:4.0f} over {:3d} episodes)." + \
+        self.exp_progress_msg = "Exp {:3d}. Ep {:5d}, Rwd={:1.4f} (mean={:1.4f} over {:3d} episodes)." + \
                                 " {} exceeded in {:4d} eps. Loss={:1.2e} (avg={:1.2e}). Agent epsilon={:3.2f} %." + \
                                 " Average step duration: {:2.6f} ms."
         self.exps_conf_str = ""
+
+        self.dpi = 800  # Plotting option
 
         # Memory pre-allocation
         self.Rwd_per_ep_v = np.zeros((1, 5000))
@@ -105,7 +113,10 @@ class ExperimentsManager:
             avg_loss = self.Avg_Loss_per_ep[self.exp, self.ep]
 
             avg_rwds = self.Avg_Rwd_per_ep[self.exp, 0:self.ep+1]
-            i_last_low_rwd = np.max(np.where(avg_rwds < self.min_avg_rwd))
+            idx_unsolved_eps = np.where(avg_rwds < self.min_avg_rwd)
+            i_last_low_rwd = self.ep
+            if not idx_unsolved_eps:
+                i_last_low_rwd = np.max(idx_unsolved_eps)
             n_solved_eps = self.ep - i_last_low_rwd
 
             duration_ms = 0
@@ -123,6 +134,8 @@ class ExperimentsManager:
         loss_v = 0
 
         for self.step in range(self.max_step):
+            if self.render_environment and self.step % 10 == 0:
+                env.render()
 
             # Maybe update the target estimator
             if self.global_step % self.target_params_update_period_steps == 0:
@@ -184,6 +197,7 @@ class ExperimentsManager:
                 self.agent.eps *= self.decay_eps
 
             self.__print_experiment_progress()
+        self.agent.value_func.save()
 
     def __create_gym_stats_directory(self, env):
         if self.results_dir_prefix is None:
@@ -205,12 +219,12 @@ class ExperimentsManager:
             layers_size += "-"+str(s)
         layers_size += "-"+str(n_actions)
 
-        exp_conf_str = "{}_{}_D{:1.2f}_DE{:1.2e}_Em{:1.2e}_LR{:1.2e}_DL{}_MS{}_" +\
-                       "DDQN{}_N{:1.1e}_BS{}_NEx{}_NEp{}_C{}_K{}_PER{}_IS{}_a{:1.2f}_b0{:1.2f}"
-        self.exps_conf_str = exp_conf_str.format(time.strftime("%Y_%m_%d_%H_%M_%S"), layers_size, self.discount,
+        exp_conf_str = "{}_{}_{:1.2f}_{:1.4f}_{:1.2e}_{:1.0e}_DL{}_" +\
+                       "DDQN{}_{}_p{}_C{}_K{}_PER{}_IS{}_a{:1.1f}_b0{:1.1f}"
+        self.exps_conf_str = exp_conf_str.format(time.strftime("%Y%m%d%H%M%S"), layers_size, self.discount,
                                                  self.decay_eps, self.eps_min, self.learning_rate,
-                                                 1 if self.decay_lr else 0, self.max_step, 1 if self.double_dqn else 0,
-                                                 self.replay_memory_max_size, self.batch_size, n_exps, n_ep,
+                                                 1 if self.decay_lr else 0, 1 if self.double_dqn else 0,
+                                                 self.batch_size, n_ep,
                                                  self.target_params_update_period_steps, self.replay_period_steps,
                                                  1 if self.per_proportional_prioritization else 0,
                                                  1 if self.per_apply_importance_sampling else 0,
@@ -237,7 +251,8 @@ class ExperimentsManager:
             raise NotImplementedError("{} action spaces are not supported yet.".format(type(env.action_space)))
         return n_actions
 
-    def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True, figures_format=None):
+    def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True, figures_format=None,
+                        agent=None):
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
         self.Loss_per_ep_v = np.zeros((n_exps, n_ep))
         self.Avg_Rwd_per_ep = np.zeros((n_exps, n_ep))
@@ -252,9 +267,14 @@ class ExperimentsManager:
         env = gym.make(self.env_name)
         n_actions = self.get_environment_actions(env)
         state_dim = env.observation_space.high.shape[0]
+        self.memory_check(env)
 
         self.__build_experiments_conf_str(n_exps, n_ep, n_actions, state_dim)
         self.__create_figures_directory()
+
+        if self.checkpoint_save_period_steps is None:
+            self.checkpoint_save_period_steps = n_ep*self.max_step//4  # By default, save 4 checkpoints
+            ckpt_sv_period_epochs = self.checkpoint_save_period_steps // self.replay_period_steps
 
         for self.exp in range(n_exps):
             print(self.conf_msg.format(self.exp, n_exps, self.env_name))
@@ -271,6 +291,7 @@ class ExperimentsManager:
                 self.summaries_path_current = os.path.join(self.summaries_path,
                                                            self.env_name,
                                                            self.exps_conf_str + "_Exp" + str(self.exp))
+
             if self.checkpoints_dir is not None:
                 self.checkpoints_dir_current = os.path.join(self.checkpoints_dir,
                                                             self.env_name,
@@ -279,28 +300,34 @@ class ExperimentsManager:
                     os.makedirs(self.checkpoints_dir_current)
 
             # Create agent
-            value_function = ValueFunctionDQN(scope="q", state_dim=state_dim, n_actions=n_actions,
-                                              train_batch_size=self.batch_size, learning_rate=self.learning_rate,
-                                              hidden_layers_size=self.agent_value_function_hidden_layers_size,
-                                              decay_lr=self.decay_lr, huber_loss=False,
-                                              summaries_path=self.summaries_path_current,
-                                              reset_default_graph=True,
-                                              checkpoints_dir=self.checkpoints_dir_current,
-                                              apply_wis=self.per_apply_importance_sampling)
+            if agent is None:
+                value_function = ValueFunctionDQN(scope="q", state_dim=state_dim, n_actions=n_actions,
+                                                  train_batch_size=self.batch_size, learning_rate=self.learning_rate,
+                                                  hidden_layers_size=self.agent_value_function_hidden_layers_size,
+                                                  decay_lr=self.decay_lr, huber_loss=False,
+                                                  summaries_path=self.summaries_path_current,
+                                                  reset_default_graph=True,
+                                                  checkpoints_dir=self.checkpoints_dir_current,
+                                                  checkpoint_save_period_epochs=ckpt_sv_period_epochs,
+                                                  apply_wis=self.per_apply_importance_sampling,
+                                                  restoration_checkpoint=self.restoration_checkpoint)
 
-            self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
-                                        per_proportional_prioritization=self.per_proportional_prioritization,
-                                        per_apply_importance_sampling=self.per_apply_importance_sampling,
-                                        per_alpha=self.per_alpha, per_beta0=self.per_beta0)
+                self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
+                                            per_proportional_prioritization=self.per_proportional_prioritization,
+                                            per_apply_importance_sampling=self.per_apply_importance_sampling,
+                                            per_alpha=self.per_alpha, per_beta0=self.per_beta0)
 
-            if self.per_proportional_prioritization:
-                self.agent.memory = SumTree(self.replay_memory_max_size)
+                if self.per_proportional_prioritization:
+                    self.agent.memory = SumTree(self.replay_memory_max_size)
+                else:
+                    self.agent.memory = DoubleEndedQueue(max_size=self.replay_memory_max_size)
             else:
-                self.agent.memory = DoubleEndedQueue(max_size=self.replay_memory_max_size)
+                self.agent = agent
 
             self.run_experiment(env, n_ep, stop_training_min_avg_rwd)   # This is where the action happens
 
-            value_function.close_summary_file()
+            if agent is None:
+                value_function.close_summary_file()
 
             env.close()
             if self.upload_last_exp and self.exp == n_exps - 1:
@@ -320,6 +347,23 @@ class ExperimentsManager:
 
         # Return the final Rwd averaged over all experiments AND the mean number of episodes needed to reach the min Rwd
         return self.rwd_exps_avg_ma[-1], np.mean(self.n_eps_to_reach_min_avg_rwd)
+
+    def memory_check(self, env):
+        state_next, reward, done, info = env.step(0)
+        exp_size = sys.getsizeof(state_next) * 2 + sys.getsizeof(reward) + sys.getsizeof(done) + sys.getsizeof(int)
+        needed_mem_bytes = exp_size * self.replay_memory_max_size
+        mem = psutil.virtual_memory()
+        if mem.available < needed_mem_bytes:
+            max_mem_size_av = mem.available//exp_size
+            max_mem_size_tot = mem.total // exp_size
+            explanation = "The replay memory size exceeds the available memory." +\
+                          " Each (s, a, r, s', done) tuple occupies {:2.1f} KB.\n" +\
+                          " A replay memory of size {} would require " +\
+                          "{:2.1f} GB, which exceeds the available (total) {:2.1f} ({:2.1f}) GB.\n" +\
+                          " Given the available memory, a replay memory size of {} (max: {}) may do the job."
+            raise ValueError(explanation.format(exp_size/1024, self.replay_memory_max_size,
+                                                needed_mem_bytes/(1024 ** 3), mem.available/(1024 ** 3),
+                                                mem.total/(1024 ** 3), max_mem_size_av, max_mem_size_tot))
 
     def print_experiment_summary(self):
         duration_ms = np.mean(self.step_durations_s) * 1000
@@ -346,7 +390,8 @@ class ExperimentsManager:
             # PLOT ALL EXPERIMENTS
             fig = plt.figure()
             for i in range(n_exps):
-                plt.plot(eps, self.Avg_Rwd_per_ep[i, :], label="Exp {}".format(i))
+                # plt.plot(eps, self.Avg_Rwd_per_ep[i, :], label="Exp {}".format(i))
+                shadow_plot(eps, self.Rwd_per_ep_v[i, :], label="Exp {}".format(i), smooth=0.1)
             # plt.ylim([-self.max_step - 10, -70])
             plt.xlabel("Episode number")
             plt.ylabel("Reward")
@@ -357,14 +402,14 @@ class ExperimentsManager:
             plt.title("\n".join(wrap(ttl, 60)))
 
             if self.figures_dir is not None:
-                fig_savepath = os.path.join(self.figures_dir, "RwdsComparisonsAcrossExps.png")
-                plt.savefig(fig_savepath)
+                fig_savepath = os.path.join(self.figures_dir, "RwdsExpsComp.png")
+                plt.savefig(fig_savepath, dpi=self.dpi)
 
                 if figures_format is not None:
                     try:
                         fig_savepath = os.path.join(self.figures_dir,
                                                     "RwdsComparisonsAcrossExps.{}".format(figures_format))
-                        plt.savefig(fig_savepath, format=figures_format)
+                        plt.savefig(fig_savepath, format=figures_format, dpi=self.dpi)
                     except:
                         print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
@@ -373,7 +418,6 @@ class ExperimentsManager:
             fig = plt.figure()
             plt.subplot(211)
             plt.plot(eps, self.rwd_exps_avg, label="Average over {:3d} experiments".format(n_exps))
-            # plt.ylim([-self.max_step - 10, -70])
             plt.ylabel("Reward per episode")
             plt.grid(True)
 
@@ -403,12 +447,12 @@ class ExperimentsManager:
 
             if self.figures_dir is not None:
                 fig_savepath = os.path.join(self.figures_dir, "ExpsAverage.png")
-                plt.savefig(fig_savepath)
+                plt.savefig(fig_savepath, dpi=self.dpi)
 
                 if figures_format is not None:
                     try:
                         fig_savepath = os.path.join(self.figures_dir, "ExpsAverage.{}".format(figures_format))
-                        plt.savefig(fig_savepath, format=figures_format)
+                        plt.savefig(fig_savepath, format=figures_format, dpi=self.dpi)
                     except:
                         print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
@@ -436,12 +480,12 @@ class ExperimentsManager:
 
             if self.figures_dir is not None:
                 fig_savepath = os.path.join(self.figures_dir, "Exp{}_ValueFuncs.png".format(self.exp))
-                plt.savefig(fig_savepath)
+                plt.savefig(fig_savepath, dpi=self.dpi)
                 if figures_format is not None:
                     try:
                         fig_savepath = os.path.join(self.figures_dir,
                                                     "Exp{}_ValueFuncs.{}".format(self.exp, figures_format))
-                        plt.savefig(fig_savepath, format=figures_format)
+                        plt.savefig(fig_savepath, format=figures_format, dpi=self.dpi)
                     except:
                         print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
@@ -453,9 +497,7 @@ class ExperimentsManager:
             eps = range(n_ep)
             fig = plt.figure()
             ax1 = plt.subplot(211)
-            plt.plot(eps, self.Rwd_per_ep_v[self.exp, :], label="Instantaneous")
-            plt.plot(eps, self.Avg_Rwd_per_ep[self.exp, :], label="Mean over {} eps".format(self.n_avg_ep))
-            # plt.ylim([-self.max_step - 10, -70])
+            shadow_plot(eps, self.Rwd_per_ep_v[self.exp, :], smooth=0.1)
             plt.xlabel("Episode number")
             plt.ylabel("Reward per episode")
 
@@ -477,13 +519,11 @@ class ExperimentsManager:
                                                                                             np.std(rwd_per_ep_exp_avg)))
 
             plt.subplot(212)
-            plt.semilogy(eps, self.Loss_per_ep_v[self.exp, :], label="Instantaneous")
-            plt.semilogy(eps, self.Avg_Loss_per_ep[self.exp, :], label="Mean over {} eps".format(self.n_avg_ep))
+            shadow_plot(eps, self.Loss_per_ep_v[self.exp, :], semilogy=True, smooth=0.1)
             plt.xlabel("Episode number")
             plt.ylabel("Loss per episode")
             plt.grid(True)
             plt.title("Value function loss")
-            plt.legend(loc='lower right')
 
             sttl = self.exps_conf_str + ". Experiment {}".format(self.exp)
             plt.suptitle("\n".join(wrap(sttl, 60)))
@@ -492,13 +532,13 @@ class ExperimentsManager:
 
             if self.figures_dir is not None:
                 fig_savepath = os.path.join(self.figures_dir, "Experiment{}_Rwd_Loss.png".format(self.exp))
-                plt.savefig(fig_savepath)
+                plt.savefig(fig_savepath, dpi=self.dpi)
 
                 if figures_format is not None:
                     try:
                         fig_savepath = os.path.join(self.figures_dir, "Experiment{}_Rwd_Loss.{}".format(self.exp,
                                                                                                         figures_format))
-                        plt.savefig(fig_savepath, format=figures_format)
+                        plt.savefig(fig_savepath, format=figures_format, dpi=self.dpi)
                     except:
                         print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
