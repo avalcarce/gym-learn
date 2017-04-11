@@ -24,7 +24,8 @@ class ExperimentsManager:
                  upload_last_exp=False, double_dqn=False, target_params_update_period_steps=1, gym_api_key="",
                  gym_algorithm_id=None, checkpoints_dir='ChkPts', min_avg_rwd=-110, replay_period_steps=1,
                  per_proportional_prioritization=False, per_apply_importance_sampling=False, per_alpha=0.6,
-                 per_beta0=0.4, render_environment=False, checkpoint_save_period_steps=None, restoration_checkpoint=None):
+                 per_beta0=0.4, render_environment=False, checkpoint_save_period_steps=None,
+                 restoration_checkpoint=None, kpis_dir=None):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
         self.render_environment = render_environment
@@ -52,6 +53,7 @@ class ExperimentsManager:
         self.checkpoints_dir_current = checkpoints_dir
         self.checkpoint_save_period_steps = checkpoint_save_period_steps
         self.restoration_checkpoint = restoration_checkpoint
+        self.kpis_dir = kpis_dir
 
         # Prioritized Experience Replay parameters. See https://arxiv.org/pdf/1511.05952.pdf
         self.per_proportional_prioritization = per_proportional_prioritization  # Flavour of Prioritized Experience Rep.
@@ -242,6 +244,18 @@ class ExperimentsManager:
                     else:
                         break
 
+    def __create_kpis_directory(self):
+        if self.kpis_dir is not None:
+            self.kpis_dir = os.path.join(self.kpis_dir, self.env_name, self.exps_conf_str)
+            if not os.path.exists(self.kpis_dir):
+                os.makedirs(self.kpis_dir)
+            else:
+                for dirpath, dirnames, files in os.walk(self.kpis_dir):
+                    if files:
+                        raise FileExistsError("The kpis directory exists and has files: {}".format(self.kpis_dir))
+                    else:
+                        break
+
     def get_environment_actions(self, env):
         if isinstance(env.action_space, gym.spaces.Box):
             raise NotImplementedError("Continuous action spaces are not supported yet.")
@@ -271,6 +285,7 @@ class ExperimentsManager:
 
         self.__build_experiments_conf_str(n_exps, n_ep, n_actions, state_dim)
         self.__create_figures_directory()
+        self.__create_kpis_directory()
 
         if self.checkpoint_save_period_steps is None:
             self.checkpoint_save_period_steps = n_ep*self.max_step//4  # By default, save 4 checkpoints
@@ -339,6 +354,7 @@ class ExperimentsManager:
             self.plot_value_function(figures_format=figures_format)
             self.print_experiment_summary()
 
+        self.save_kpis()
         self.calculate_avg_rwd()
         self.plot_rwd_averages(n_exps, figures_format=figures_format)
         self.print_summary()
@@ -390,9 +406,7 @@ class ExperimentsManager:
             # PLOT ALL EXPERIMENTS
             fig = plt.figure()
             for i in range(n_exps):
-                # plt.plot(eps, self.Avg_Rwd_per_ep[i, :], label="Exp {}".format(i))
                 shadow_plot(eps, self.Rwd_per_ep_v[i, :], label="Exp {}".format(i), smooth=0.1)
-            # plt.ylim([-self.max_step - 10, -70])
             plt.xlabel("Episode number")
             plt.ylabel("Reward")
             plt.grid(True)
@@ -542,3 +556,9 @@ class ExperimentsManager:
                     except:
                         print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
+
+    def save_kpis(self):
+        if self.kpis_dir is not None:
+            np.save(os.path.join(self.kpis_dir, "rwd_per_ep"), self.Rwd_per_ep_v)
+            np.save(os.path.join(self.kpis_dir, "loss_per_ep"), self.Loss_per_ep_v)
+            np.save(os.path.join(self.kpis_dir, "agent_value_function"), self.agent_value_function)
