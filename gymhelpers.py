@@ -198,6 +198,9 @@ class ExperimentsManager:
             if self.agent.eps > self.eps_min:
                 self.agent.eps *= self.decay_eps
 
+            if self.ep > 0 and self.ep % (n_ep//4) == 0:  # Save KPIs progress four times during each experiment
+                self.save_kpis("_{}".format(self.ep))
+
             self.__print_experiment_progress()
         self.agent.value_func.save()
 
@@ -557,8 +560,8 @@ class ExperimentsManager:
                         print("Error while saving figure in {} format.".format(figures_format))
             plt.close(fig)
 
-    def save_kpis(self):
+    def save_kpis(self, suffix=""):
         if self.kpis_dir is not None:
-            np.save(os.path.join(self.kpis_dir, "rwd_per_ep"), self.Rwd_per_ep_v)
-            np.save(os.path.join(self.kpis_dir, "loss_per_ep"), self.Loss_per_ep_v)
-            np.save(os.path.join(self.kpis_dir, "agent_value_function"), self.agent_value_function)
+            np.save(os.path.join(self.kpis_dir, "rwd_per_ep"+suffix), self.Rwd_per_ep_v)
+            np.save(os.path.join(self.kpis_dir, "loss_per_ep"+suffix), self.Loss_per_ep_v)
+            np.save(os.path.join(self.kpis_dir, "agent_value_function"+suffix), self.agent_value_function)
