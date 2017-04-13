@@ -364,6 +364,15 @@ class ExperimentsManager:
         env.close()
         return n_actions, state_dim
 
+    def __update_embeddings_configuration(self, n_ep, n_embeddings=0):
+        self.embeddings_global_steps = np.random.choice(n_ep * self.max_step, size=n_embeddings, replace=False)
+        assert n_embeddings <= 10000, "Cannot collect more than 10000 embeddings."
+        self.embeddings_sprite_n_rows = math.ceil(math.sqrt(n_embeddings)) if n_embeddings > 0 else 0
+        self.embedding_thumbnail_h = 8192 // self.embeddings_sprite_n_rows if n_embeddings > 0 else 0
+        self.embedding_thumbnail_w = 8192 // self.embeddings_sprite_n_rows if n_embeddings > 0 else 0
+        self.sprite_image = np.zeros((self.embeddings_sprite_n_rows * self.embedding_thumbnail_h,
+                                      self.embeddings_sprite_n_rows * self.embedding_thumbnail_w, 3), dtype=np.uint8)
+
     def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True, figures_format=None,
                         agent=None, n_embeddings=0):
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
@@ -375,13 +384,7 @@ class ExperimentsManager:
         self.Agent_Epsilon_per_ep = np.zeros((n_exps, n_ep))
         self.agent_value_function = np.zeros((n_exps, n_ep, self.max_step))
         self.step_durations_s = np.zeros(shape=(n_ep, self.max_step), dtype=float)
-        self.embeddings_global_steps = np.random.choice(n_ep*self.max_step, size=n_embeddings, replace=False)
-        assert n_embeddings <= 10000, "Cannot collect more than 10000 embeddings."
-        self.embeddings_sprite_n_rows = math.ceil(math.sqrt(n_embeddings)) if n_embeddings > 0 else 0
-        self.embedding_thumbnail_h = 8192//self.embeddings_sprite_n_rows if n_embeddings > 0 else 0
-        self.embedding_thumbnail_w = 8192 // self.embeddings_sprite_n_rows if n_embeddings > 0 else 0
-        self.sprite_image = np.zeros((self.embeddings_sprite_n_rows*self.embedding_thumbnail_h,
-                                      self.embeddings_sprite_n_rows * self.embedding_thumbnail_w, 3), dtype=np.uint8)
+        self.__update_embeddings_configuration(n_ep, n_embeddings)
 
         n_actions, state_dim = self.__get_problem_dimensionality()
 
