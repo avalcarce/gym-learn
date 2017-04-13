@@ -1,6 +1,7 @@
 import os
 
 import tensorflow as tf
+from tensorflow.contrib.tensorboard.plugins import projector
 import numpy as np
 
 
@@ -8,7 +9,7 @@ class ValueFunctionDQN:
     def __init__(self, scope="MyValueFunctionEstimator", state_dim=2, n_actions=3, train_batch_size=64,
                  learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, huber_loss=False, summaries_path=None,
                  reset_default_graph=False, checkpoints_dir=None, apply_wis=False, checkpoint_save_period_epochs=40000,
-                 restoration_checkpoint=None):
+                 restoration_checkpoint=None, n_embeddings=0):
         # Input check
         if hidden_layers_size is None:
             hidden_layers_size = [128, 64]  # Default ANN architecture
@@ -32,6 +33,7 @@ class ValueFunctionDQN:
         self.checkpoint_pathname = os.path.join(self.checkpoints_dir, self.scope)
         self.checkpoint_save_period_epochs = checkpoint_save_period_epochs
         self.restoration_checkpoint = restoration_checkpoint
+        self.n_embeddings = n_embeddings
 
         # Apply Weighted Importance Sampling. See "Weighted importance sampling for off-policy learning with linear
         # function approximation". In Advances in Neural Information Processing Systems, pp. 3014–3022, 2014
@@ -74,8 +76,8 @@ class ValueFunctionDQN:
                         self.__variable_summaries(self.biases[l], "b" + str(l), histogram=True)
 
             # Interconnection of the various ANN nodes
-            self.prediction = self.__model(self.x)
-            self.prediction_with_old_params = self.__model(self.x, use_old_params=True)
+            self.prediction, last_hidden = self.__model(self.x)
+            self.prediction_with_old_params, _ = self.__model(self.x, use_old_params=True)
 
             # Training calculations
             if huber_loss:
@@ -96,6 +98,8 @@ class ValueFunctionDQN:
             self.opt_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
             self.train_op = self.opt_op.minimize(self.loss, global_step=self.global_step)
 
+            self.__create_embedding_ops(last_hidden)
+
             self.init_op = tf.global_variables_initializer()
 
             # Operations to update the target Q network
@@ -108,12 +112,7 @@ class ValueFunctionDQN:
                 self.__variable_summaries(self.loss, "loss", scalar_only=True)
                 self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True)
 
-        if self.checkpoints_dir is not None or self.restoration_checkpoint is not None:
-            var_list = []
-            for l in range(len(self.layers_size) - 1):
-                var_list.append(self.weights[l])
-                var_list.append(self.biases[l])
-            self.saver = tf.train.Saver(var_list, pad_step_number=True)
+        self.__create_checkpoints_saver()
 
         if self.summaries_path is not None:
             self.merged_summaries = tf.summary.merge_all()
@@ -125,6 +124,22 @@ class ValueFunctionDQN:
             self.merged_summaries = None
 
         self.session = None
+
+    def __create_checkpoints_saver(self):
+        if self.checkpoints_dir is not None or self.restoration_checkpoint is not None:
+            var_list = []
+            for l in range(len(self.layers_size) - 1):
+                var_list.append(self.weights[l])
+                var_list.append(self.biases[l])
+            self.saver = tf.train.Saver(var_list, pad_step_number=True)
+
+    def __create_embedding_ops(self, last_hidden):
+        if self.n_embeddings > 0:  # Preallocate memory to save embeddings
+            self.embedding_var = tf.Variable(tf.zeros([self.n_embeddings, self.layers_size[-2]]), name='representation')
+            self.next_embedding = tf.Variable(tf.zeros([1], dtype=tf.int32), name="next_embedding_counter")
+            self.save_embedding_op = tf.scatter_update(self.embedding_var, self.next_embedding, last_hidden)
+            self.increment_next_embedding_op = self.next_embedding.assign_add(tf.constant([1]))
+            self.embeddings_saver = tf.train.Saver([self.embedding_var])
 
     def __model(self, x, use_old_params=False):
         z = []
@@ -147,7 +162,7 @@ class ValueFunctionDQN:
                         self.__variable_summaries(z[l], "z" + str(l))
                         self.__variable_summaries(hidden[l], "hidden" + str(l))
 
-        return z[-1]  # Output layer has Identity units.
+        return z[-1], tf.reshape(hidden[-1], [1, self.layers_size[-2]])  # Output layer has Identity units.
 
     @staticmethod
     def __huber_loss(targets, predictions):
@@ -169,16 +184,24 @@ class ValueFunctionDQN:
                 self.saver.restore(self.session, self.restoration_checkpoint)
                 print("Model restored from checkpoint at {}.".format(self.restoration_checkpoint))
 
-    def predict(self, states, use_old_params=False):
+    def predict(self, states, use_old_params=False, saveembedding=False):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
 
         feed_dict = {self.x: states}
         if use_old_params:
-            q = self.session.run(self.prediction_with_old_params, feed_dict=feed_dict)
+            fetches = [self.prediction_with_old_params]
         else:
-            q = self.session.run(self.prediction, feed_dict=feed_dict)
+            fetches = [self.prediction]
 
-        return q
+        if saveembedding and self.n_embeddings > 0:
+            fetches.append([self.save_embedding_op])
+
+        q = self.session.run(fetches, feed_dict=feed_dict)
+
+        if saveembedding and self.n_embeddings > 0:
+            self.increment_next_embedding_op.eval(session=self.session)
+
+        return q[0]
 
     def train(self, states, targets, w=None):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
@@ -206,6 +229,24 @@ class ValueFunctionDQN:
 
     def save(self):
         self.saver.save(self.session, self.checkpoint_pathname, global_step=self.global_step)
+
+    def save_embeddings(self, log_dir=None, metadata_filename=None, sprite_path=None, embedding_thumbnail_w=0,
+                        embedding_thumbnail_h=0):
+        if self.n_embeddings > 0:
+            if metadata_filename is not None:
+                config = projector.ProjectorConfig()
+                embedding = config.embeddings.add()
+                embedding.tensor_name = self.embedding_var.name
+                embedding.metadata_path = os.path.abspath(os.path.join(log_dir, metadata_filename))
+                if sprite_path is not None:
+                    embedding.sprite.image_path = os.path.abspath(sprite_path)
+                    embedding.sprite.single_image_dim.extend([embedding_thumbnail_w, embedding_thumbnail_h])
+                summary_writer = tf.summary.FileWriter(log_dir)
+                projector.visualize_embeddings(summary_writer, config)
+
+            self.embeddings_saver.save(self.session, os.path.join(self.summaries_path, "embeddings"))
+            n_saved_embeddings = self.next_embedding.eval(self.session)
+            print("{} embeddings have been saved.".format(n_saved_embeddings[0]))
 
     def read_learned_weights_and_biases(self):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
@@ -243,5 +284,5 @@ class ValueFunctionDQN:
 
 class DuelingNetwork:
     def __init__(self):
-        a = 1
+        pass
         # TODO

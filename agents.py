@@ -70,11 +70,12 @@ class AgentEpsGreedy(ExperienceReplayAgent):
         self.loss_v = 0                         # Loss value of the last training epoch
         self.step = 0                           # Number of times the agent's act method has been successfully invoked.
 
-    def act(self, state=None):
+    def act(self, state=None, saveembedding=False):
         """
         Choose an action.
         :param state:   ndarray describing the state the action will be chosen on. If not provided, the agent will act
                         from the current state.
+        :param saveembedding:   Whether to command the value function to store an embedding of the provided state. 
         :return: An integer denoting the chosen action.
         """
         # Input check
@@ -85,7 +86,7 @@ class AgentEpsGreedy(ExperienceReplayAgent):
                 raise TypeError("Missing 1 required positional argument when the agent's state is unknown: 'state'")
 
         # Evaluate actions
-        action_values = self.value_func.predict([state])[0]
+        action_values = self.value_func.predict([state], saveembedding=saveembedding)[0]
         a_max = np.argmax(action_values)
 
         if self.explore:

@@ -1,3 +1,7 @@
+import math
+from scipy.misc import imresize, imsave
+
+
 from .utils import *
 from .agents import AgentEpsGreedy
 from .valuefunctions import ValueFunctionDQN
@@ -25,7 +29,7 @@ class ExperimentsManager:
                  gym_algorithm_id=None, checkpoints_dir='ChkPts', min_avg_rwd=-110, replay_period_steps=1,
                  per_proportional_prioritization=False, per_apply_importance_sampling=False, per_alpha=0.6,
                  per_beta0=0.4, render_environment=False, checkpoint_save_period_steps=None,
-                 restoration_checkpoint=None, kpis_dir=None):
+                 restoration_checkpoint=None, kpis_dir=None, use_long_dirnames=False):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
         self.render_environment = render_environment
@@ -51,9 +55,12 @@ class ExperimentsManager:
         self.gym_algorithm_id = gym_algorithm_id
         self.checkpoints_dir = checkpoints_dir
         self.checkpoints_dir_current = checkpoints_dir
-        self.checkpoint_save_period_steps = checkpoint_save_period_steps
+        self.checkpoint_save_period_steps = checkpoint_save_period_steps  # type: int
         self.restoration_checkpoint = restoration_checkpoint
+        self.use_long_dirnames = use_long_dirnames
         self.kpis_dir = kpis_dir
+        self.embeddings_metadata_file = None
+        self.sprite_path = None
 
         # Prioritized Experience Replay parameters. See https://arxiv.org/pdf/1511.05952.pdf
         self.per_proportional_prioritization = per_proportional_prioritization  # Flavour of Prioritized Experience Rep.
@@ -129,6 +136,12 @@ class ExperimentsManager:
                 self.exp_progress_msg.format(self.exp, self.ep, rwd, avg_rwd, self.n_avg_ep, self.min_avg_rwd,
                                              n_solved_eps, loss, avg_loss, self.agent.eps*100, duration_ms))
 
+    def __maybe_update_target_estimator(self):
+        if self.global_step % self.target_params_update_period_steps == 0:
+            self.agent.value_func.update_old_params()
+            if self.ep_verbose:
+                print("Copied model parameters to target network.")
+
     def run_episode(self, env, train=True):
         self.agent.state = env.reset()
         done = False
@@ -137,14 +150,8 @@ class ExperimentsManager:
 
         for self.step in range(self.max_step):
             if self.render_environment and self.step % 10 == 0:
-                env.render()
-
-            # Maybe update the target estimator
-            if self.global_step % self.target_params_update_period_steps == 0:
-                self.agent.value_func.update_old_params()
-                if self.ep_verbose:
-                    print("Copied model parameters to target network.")
-
+                env.render()  # Render environment for human consumption
+            self.__maybe_update_target_estimator()
             self.agent.anneal_per_importance_sampling(self.step, self.max_step)
 
             t = time.time()
@@ -152,7 +159,10 @@ class ExperimentsManager:
 
             if done:
                 break
-            action = self.agent.act(self.agent.state)
+
+            save_embedding = self.global_step in self.embeddings_global_steps
+            self.__maybe_collect_embedding_thumbnail(env, save_embedding)
+            action = self.agent.act(self.agent.state, saveembedding=save_embedding)
             self.agent_value_function[self.exp, self.ep, self.step] = self.agent.current_value
             self.global_step += 1
             state_next, reward, done, info = env.step(action)
@@ -164,7 +174,29 @@ class ExperimentsManager:
 
             self.agent.state = copy.copy(state_next)
             self.step_durations_s[self.ep, self.step] = time.time() - t  # Time elapsed during this step
+
+            if save_embedding:
+                self.embeddings_metadata_file.write("{:2.6f}\n".format(self.agent.current_value))
         return loss_v, self.agent.total_reward
+
+    def __maybe_collect_embedding_thumbnail(self, env, saveembedding=False):
+        if saveembedding:
+            env_img = env.render(mode="rgb_array")
+            env_img = imresize(env_img, (self.embedding_thumbnail_h, self.embedding_thumbnail_w))
+            (r, c) = self.nxt_thumb
+            self.sprite_image[r:r + self.embedding_thumbnail_h, c:c + self.embedding_thumbnail_w] = env_img
+            if self.nxt_thumb[1] == self.sprite_image.shape[1] - self.embedding_thumbnail_w:
+                self.nxt_thumb[0] += self.embedding_thumbnail_h
+            self.nxt_thumb[1] = (self.nxt_thumb[1] + self.embedding_thumbnail_w) % self.sprite_image.shape[1]
+            self.n_saved_embeddings += 1
+
+    def __maybe_stop_training(self, stop_training_min_avg_rwd, train):
+        if stop_training_min_avg_rwd is not None:
+            if train and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
+                train = False
+                self.agent.explore = False
+                print("Minimum average reward reached. Stop training and exploration.")
+        return train
 
     def run_experiment(self, env, n_ep, stop_training_min_avg_rwd=None):
         self.n_ep = n_ep
@@ -185,11 +217,7 @@ class ExperimentsManager:
             self.Avg_Loss_per_ep[self.exp, self.ep] = np.mean(last_losses)
             self.Agent_Epsilon_per_ep[self.exp, self.ep] = self.agent.eps
 
-            if stop_training_min_avg_rwd is not None:
-                if train and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
-                    train = False
-                    self.agent.explore = False
-                    print("Minimum average reward reached. Stop training and exploration.")
+            train = self.__maybe_stop_training(stop_training_min_avg_rwd, train)
 
             if self.Avg_Rwd_per_ep[self.exp, self.ep] >= self.min_avg_rwd:
                 self.n_eps_to_reach_min_avg_rwd[self.exp] = np.minimum(self.ep,
@@ -202,7 +230,13 @@ class ExperimentsManager:
                 self.save_kpis("_{}".format(self.ep))
 
             self.__print_experiment_progress()
-        self.agent.value_func.save()
+        self.agent.value_func.save()  # Save one final checkpoint at the end of training
+        self.__maybe_save_sprite_image("_{}".format(self.agent.value_func.scope))
+        if self.embeddings_metadata_file is not None:
+            self.agent.value_func.save_embeddings(self.summaries_path_current+"_{}".format(self.agent.value_func.scope),
+                                                  os.path.basename(self.embeddings_metadata_file.name),
+                                                  self.sprite_path, self.embedding_thumbnail_w,
+                                                  self.embedding_thumbnail_h)
 
     def __create_gym_stats_directory(self, env):
         if self.results_dir_prefix is None:
@@ -217,23 +251,50 @@ class ExperimentsManager:
             raise FileExistsError(self.gym_stats_dir)
         return wrappers.Monitor(env, self.gym_stats_dir)
 
-    def __build_experiments_conf_str(self, n_exps, n_ep, n_actions, state_dim):
-
+    def __build_layers_size_str(self, state_dim, n_actions):
         layers_size = str(state_dim)
         for s in self.agent_value_function_hidden_layers_size:
-            layers_size += "-"+str(s)
-        layers_size += "-"+str(n_actions)
+            layers_size += "-" + str(s)
+        layers_size += "-" + str(n_actions)
 
-        exp_conf_str = "{}_{}_{:1.2f}_{:1.4f}_{:1.2e}_{:1.0e}_DL{}_" +\
-                       "DDQN{}_{}_p{}_C{}_K{}_PER{}_IS{}_a{:1.1f}_b0{:1.1f}"
-        self.exps_conf_str = exp_conf_str.format(time.strftime("%Y%m%d%H%M%S"), layers_size, self.discount,
-                                                 self.decay_eps, self.eps_min, self.learning_rate,
-                                                 1 if self.decay_lr else 0, 1 if self.double_dqn else 0,
-                                                 self.batch_size, n_ep,
-                                                 self.target_params_update_period_steps, self.replay_period_steps,
-                                                 1 if self.per_proportional_prioritization else 0,
-                                                 1 if self.per_apply_importance_sampling else 0,
-                                                 self.per_alpha, self.per_beta0)
+        return layers_size
+
+    def __build_experiments_conf_str(self, n_ep, n_actions, state_dim):
+
+        layers_size = self.__build_layers_size_str(state_dim, n_actions)
+
+        if self.use_long_dirnames:
+            exp_conf_str = "{}_{}_{:1.2f}_{:1.4f}_{:1.2e}_{:1.0e}_DL{}_" +\
+                           "DDQN{}_{}_p{}_C{}_K{}_PER{}_IS{}_a{:1.1f}_b0{:1.1f}"
+            self.exps_conf_str = exp_conf_str.format(time.strftime("%Y%m%d%H%M%S"), layers_size, self.discount,
+                                                     self.decay_eps, self.eps_min, self.learning_rate,
+                                                     1 if self.decay_lr else 0, 1 if self.double_dqn else 0,
+                                                     self.batch_size, n_ep,
+                                                     self.target_params_update_period_steps, self.replay_period_steps,
+                                                     1 if self.per_proportional_prioritization else 0,
+                                                     1 if self.per_apply_importance_sampling else 0,
+                                                     self.per_alpha, self.per_beta0)
+        else:
+            self.exps_conf_str = "{}".format(time.strftime("%Y%m%d%H%M%S"))
+
+    def __save_config_file(self, n_exps, n_ep, state_dim, n_actions, stop_training_min_avg_rwd):
+        config_file_dir = os.path.join("Logs", self.exps_conf_str)
+        if not os.path.exists(config_file_dir):
+            os.makedirs(config_file_dir)
+
+        config_file = open(os.path.join(config_file_dir, "config.txt"), "w")
+
+        layers_size = self.__build_layers_size_str(state_dim, n_actions)
+        exp_conf_str = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n"
+        config_file.write(exp_conf_str.format(self.env_name, layers_size, self.target_params_update_period_steps,
+                                              self.discount, self.decay_eps, self.eps_min, self.learning_rate,
+                                              "TRUE" if self.decay_lr else "FALSE", self.max_step,
+                                              "TRUE" if self.double_dqn else "FALSE", self.replay_memory_max_size,
+                                              self.batch_size, n_exps, n_ep, self.replay_period_steps,
+                                              stop_training_min_avg_rwd, self.min_avg_rwd,
+                                              self.per_proportional_prioritization, self.per_apply_importance_sampling,
+                                              self.per_alpha, self.per_beta0))
+        config_file.close()
 
     def __create_figures_directory(self):
         if self.figures_dir is not None:
@@ -259,6 +320,21 @@ class ExperimentsManager:
                     else:
                         break
 
+    def __create_embeddings_metadata_file(self, collect_embeddings, suffix=""):
+        if collect_embeddings:
+            self.embeddings_metadata_file = open(os.path.join(self.summaries_path_current+suffix, "metadata.tsv"), "w")
+            self.nxt_thumb = np.array([0, 0])  # Next pixels in the sprite image onto which to store the next thumbnail.
+            self.n_saved_embeddings = 0
+
+    def __close_embeddings_metadata_file(self):
+        if self.embeddings_metadata_file is not None:
+            self.embeddings_metadata_file.close()
+
+    def __maybe_save_sprite_image(self, suffix=""):
+        if self.embeddings_metadata_file is not None:
+            self.sprite_path = os.path.join(self.summaries_path_current+suffix, "embeddings_sprite.jpg")
+            imsave(self.sprite_path, self.sprite_image)
+
     def get_environment_actions(self, env):
         if isinstance(env.action_space, gym.spaces.Box):
             raise NotImplementedError("Continuous action spaces are not supported yet.")
@@ -268,8 +344,28 @@ class ExperimentsManager:
             raise NotImplementedError("{} action spaces are not supported yet.".format(type(env.action_space)))
         return n_actions
 
+    def __update_summaries_path_current(self):
+        if self.summaries_path is not None:
+            self.summaries_path_current = os.path.join(self.summaries_path, self.env_name,
+                                                       self.exps_conf_str + "_Exp" + str(self.exp))
+
+    def __update_checkpoints_dir_current(self):
+        if self.checkpoints_dir is not None:
+            self.checkpoints_dir_current = os.path.join(self.checkpoints_dir, self.env_name,
+                                                        self.exps_conf_str + "_Exp" + str(self.exp))
+            if not os.path.exists(self.checkpoints_dir_current):
+                os.makedirs(self.checkpoints_dir_current)
+
+    def __get_problem_dimensionality(self):
+        env = gym.make(self.env_name)
+        n_actions = self.get_environment_actions(env)
+        state_dim = env.observation_space.high.shape[0]
+        self.memory_check(env)
+        env.close()
+        return n_actions, state_dim
+
     def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True, figures_format=None,
-                        agent=None):
+                        agent=None, n_embeddings=0):
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
         self.Loss_per_ep_v = np.zeros((n_exps, n_ep))
         self.Avg_Rwd_per_ep = np.zeros((n_exps, n_ep))
@@ -279,20 +375,24 @@ class ExperimentsManager:
         self.Agent_Epsilon_per_ep = np.zeros((n_exps, n_ep))
         self.agent_value_function = np.zeros((n_exps, n_ep, self.max_step))
         self.step_durations_s = np.zeros(shape=(n_ep, self.max_step), dtype=float)
+        self.embeddings_global_steps = np.random.choice(n_ep*self.max_step, size=n_embeddings, replace=False)
+        assert n_embeddings <= 10000, "Cannot collect more than 10000 embeddings."
+        self.embeddings_sprite_n_rows = math.ceil(math.sqrt(n_embeddings)) if n_embeddings > 0 else 0
+        self.embedding_thumbnail_h = 8192//self.embeddings_sprite_n_rows if n_embeddings > 0 else 0
+        self.embedding_thumbnail_w = 8192 // self.embeddings_sprite_n_rows if n_embeddings > 0 else 0
+        self.sprite_image = np.zeros((self.embeddings_sprite_n_rows*self.embedding_thumbnail_h,
+                                      self.embeddings_sprite_n_rows * self.embedding_thumbnail_w, 3), dtype=np.uint8)
 
-        # Create environment
-        env = gym.make(self.env_name)
-        n_actions = self.get_environment_actions(env)
-        state_dim = env.observation_space.high.shape[0]
-        self.memory_check(env)
+        n_actions, state_dim = self.__get_problem_dimensionality()
 
-        self.__build_experiments_conf_str(n_exps, n_ep, n_actions, state_dim)
+        self.__build_experiments_conf_str(n_ep, n_actions, state_dim)
         self.__create_figures_directory()
         self.__create_kpis_directory()
+        self.__save_config_file(n_exps, n_ep, state_dim, n_actions, stop_training_min_avg_rwd)
 
         if self.checkpoint_save_period_steps is None:
             self.checkpoint_save_period_steps = n_ep*self.max_step//4  # By default, save 4 checkpoints
-            ckpt_sv_period_epochs = self.checkpoint_save_period_steps // self.replay_period_steps
+        ckpt_sv_period_epochs = self.checkpoint_save_period_steps // self.replay_period_steps
 
         for self.exp in range(n_exps):
             print(self.conf_msg.format(self.exp, n_exps, self.env_name))
@@ -305,17 +405,8 @@ class ExperimentsManager:
             if self.upload_last_exp and self.exp == n_exps-1:
                 env = self.__create_gym_stats_directory(env)
 
-            if self.summaries_path is not None:
-                self.summaries_path_current = os.path.join(self.summaries_path,
-                                                           self.env_name,
-                                                           self.exps_conf_str + "_Exp" + str(self.exp))
-
-            if self.checkpoints_dir is not None:
-                self.checkpoints_dir_current = os.path.join(self.checkpoints_dir,
-                                                            self.env_name,
-                                                            self.exps_conf_str+"_Exp"+str(self.exp))
-                if not os.path.exists(self.checkpoints_dir_current):
-                    os.makedirs(self.checkpoints_dir_current)
+            self.__update_summaries_path_current()
+            self.__update_checkpoints_dir_current()
 
             # Create agent
             if agent is None:
@@ -328,7 +419,9 @@ class ExperimentsManager:
                                                   checkpoints_dir=self.checkpoints_dir_current,
                                                   checkpoint_save_period_epochs=ckpt_sv_period_epochs,
                                                   apply_wis=self.per_apply_importance_sampling,
-                                                  restoration_checkpoint=self.restoration_checkpoint)
+                                                  restoration_checkpoint=self.restoration_checkpoint,
+                                                  n_embeddings=n_embeddings)
+                self.__create_embeddings_metadata_file(n_embeddings > 0, "_{}".format(value_function.scope))
 
                 self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
                                             per_proportional_prioritization=self.per_proportional_prioritization,
@@ -346,6 +439,7 @@ class ExperimentsManager:
 
             if agent is None:
                 value_function.close_summary_file()
+                self.__close_embeddings_metadata_file()
 
             env.close()
             if self.upload_last_exp and self.exp == n_exps - 1:
