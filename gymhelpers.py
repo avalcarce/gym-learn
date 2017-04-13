@@ -399,7 +399,8 @@ class ExperimentsManager:
 
         for self.exp in range(n_exps):
             print(self.conf_msg.format(self.exp, n_exps, self.env_name))
-            print(self.exps_conf_str)
+            if self.use_long_dirnames:
+                print(self.exps_conf_str)
 
             env = gym.make(self.env_name)  # Create new environment
             env.seed(self.exp)
