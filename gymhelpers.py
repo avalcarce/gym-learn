@@ -1,4 +1,6 @@
 import math
+
+import shutil
 from scipy.misc import imresize, imsave
 
 
@@ -660,6 +662,8 @@ class ExperimentsManager:
 
     def save_kpis(self, suffix=""):
         if self.kpis_dir is not None:
+            shutil.rmtree(self.kpis_dir)  # To prevent lack of space issues, first delete all previous kpis.
+            os.makedirs(self.kpis_dir)
             np.save(os.path.join(self.kpis_dir, "rwd_per_ep"+suffix), self.Rwd_per_ep_v)
             np.save(os.path.join(self.kpis_dir, "loss_per_ep"+suffix), self.Loss_per_ep_v)
             np.save(os.path.join(self.kpis_dir, "agent_value_function"+suffix), self.agent_value_function)
