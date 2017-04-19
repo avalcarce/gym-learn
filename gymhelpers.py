@@ -92,7 +92,7 @@ class ExperimentsManager:
                                 " Average step duration: {:2.6f} ms."
         self.exps_conf_str = ""
 
-        self.dpi = 800  # Plotting option
+        self.dpi = 400  # Plotting option
 
         # Memory pre-allocation
         self.Rwd_per_ep_v = np.zeros((1, 5000))
