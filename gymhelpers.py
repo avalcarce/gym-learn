@@ -194,7 +194,7 @@ class ExperimentsManager:
 
     def __maybe_stop_training(self, stop_training_min_avg_rwd, train):
         if stop_training_min_avg_rwd is not None:
-            if train and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
+            if train and self.ep >= 100 and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
                 train = False
                 self.agent.explore = False
                 print("Minimum average reward reached. Stop training and exploration.")
@@ -634,7 +634,6 @@ class ExperimentsManager:
                                                                                             's' if self.exp > 0 else '',
                                                                                             np.mean(rwd_per_ep_exp_avg),
                                                                                             np.std(rwd_per_ep_exp_avg)))
-
             plt.subplot(212)
             shadow_plot(eps, self.Loss_per_ep_v[self.exp, :], semilogy=True, smooth=0.1)
             plt.xlabel("Episode number")
