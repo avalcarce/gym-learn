@@ -1,5 +1,4 @@
 import math
-
 import shutil
 from scipy.misc import imresize, imsave
 
@@ -287,8 +286,9 @@ class ExperimentsManager:
         config_file = open(os.path.join(config_file_dir, "config.txt"), "w")
 
         layers_size = self.__build_layers_size_str(state_dim, n_actions)
-        exp_conf_str = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n"
-        config_file.write(exp_conf_str.format(self.env_name, layers_size, self.target_params_update_period_steps,
+        exp_conf_str = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n"
+        config_file.write(exp_conf_str.format(self.env_name, self.exps_conf_str[:14], layers_size,
+                                              self.target_params_update_period_steps,
                                               self.discount, self.decay_eps, self.eps_min, self.learning_rate,
                                               "TRUE" if self.decay_lr else "FALSE", self.max_step,
                                               "TRUE" if self.double_dqn else "FALSE", self.replay_memory_max_size,
