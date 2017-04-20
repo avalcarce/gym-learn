@@ -191,15 +191,15 @@ class ExperimentsManager:
             self.nxt_thumb[1] = (self.nxt_thumb[1] + self.embedding_thumbnail_w) % self.sprite_image.shape[1]
             self.n_saved_embeddings += 1
 
-    def __maybe_stop_training(self, stop_training_min_avg_rwd, train):
+    def __maybe_stop_training(self, stop_training_min_avg_rwd, n_min_training_episodes, train):
         if stop_training_min_avg_rwd is not None:
-            if train and self.ep >= 100 and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
+            if train and self.ep >= n_min_training_episodes and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
                 train = False
                 self.agent.explore = False
                 print("Minimum average reward reached. Stop training and exploration.")
         return train
 
-    def run_experiment(self, env, n_ep, stop_training_min_avg_rwd=None):
+    def run_experiment(self, env, n_ep, stop_training_min_avg_rwd=None, n_min_training_episodes=100):
         self.n_ep = n_ep
         self.global_step = 0
         train = True
@@ -218,7 +218,7 @@ class ExperimentsManager:
             self.Avg_Loss_per_ep[self.exp, self.ep] = np.mean(last_losses)
             self.Agent_Epsilon_per_ep[self.exp, self.ep] = self.agent.eps
 
-            train = self.__maybe_stop_training(stop_training_min_avg_rwd, train)
+            train = self.__maybe_stop_training(stop_training_min_avg_rwd, n_min_training_episodes, train)
 
             if self.Avg_Rwd_per_ep[self.exp, self.ep] >= self.min_avg_rwd:
                 self.n_eps_to_reach_min_avg_rwd[self.exp] = np.minimum(self.ep,
@@ -376,7 +376,7 @@ class ExperimentsManager:
                                       self.embeddings_sprite_n_rows * self.embedding_thumbnail_w, 3), dtype=np.uint8)
 
     def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True, figures_format=None,
-                        agent=None, n_embeddings=0):
+                        agent=None, n_embeddings=0, n_min_training_episodes=100):
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
         self.Loss_per_ep_v = np.zeros((n_exps, n_ep))
         self.Avg_Rwd_per_ep = np.zeros((n_exps, n_ep))
@@ -441,7 +441,7 @@ class ExperimentsManager:
             else:
                 self.agent = agent
 
-            self.run_experiment(env, n_ep, stop_training_min_avg_rwd)   # This is where the action happens
+            self.run_experiment(env, n_ep, stop_training_min_avg_rwd, n_min_training_episodes)   # This is where the action happens
 
             if agent is None:
                 value_function.close_summary_file()
@@ -665,4 +665,4 @@ class ExperimentsManager:
             os.makedirs(self.kpis_dir)
             np.save(os.path.join(self.kpis_dir, "rwd_per_ep"+suffix), self.Rwd_per_ep_v)
             np.save(os.path.join(self.kpis_dir, "loss_per_ep"+suffix), self.Loss_per_ep_v)
-            np.save(os.path.join(self.kpis_dir, "agent_value_function"+suffix), self.agent_value_function)
+            np.save(os.path.join(self.kpis_dir, "agent_value_function"+suffix), self.agent_value_function[:, ::100, :])
