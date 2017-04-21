@@ -9,7 +9,7 @@ class ValueFunctionDQN:
     def __init__(self, scope="MyValueFunctionEstimator", state_dim=2, n_actions=3, train_batch_size=64,
                  learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, huber_loss=False, summaries_path=None,
                  reset_default_graph=False, checkpoints_dir=None, apply_wis=False, checkpoint_save_period_epochs=40000,
-                 restoration_checkpoint=None, n_embeddings=0):
+                 restoration_checkpoint=None, n_embeddings=0, epsilon0=0.0):
         # Input check
         if hidden_layers_size is None:
             hidden_layers_size = [128, 64]  # Default ANN architecture
@@ -51,6 +51,8 @@ class ValueFunctionDQN:
             self.x = tf.placeholder(tf.float32, shape=(None, state_dim), name="x")
             self.train_targets = tf.placeholder(tf.float32, shape=(None, n_actions), name="train_targets")
 
+            self.__define_summarizables(epsilon0)
+
             for l in range(len(self.layers_size) - 1):
                 self.weights.append(tf.get_variable(name="w" + str(l), shape=[self.layers_size[l],
                                                                               self.layers_size[l + 1]],
@@ -79,18 +81,7 @@ class ValueFunctionDQN:
             self.prediction, last_hidden = self.__model(self.x)
             self.prediction_with_old_params, _ = self.__model(self.x, use_old_params=True)
 
-            # Training calculations
-            if huber_loss:
-                self.loss = self.__huber_loss(self.train_targets, self.prediction)
-            else:
-                self.E = tf.subtract(self.train_targets, self.prediction, name="Error")
-                self.SE = tf.square(self.E, name="SquaredError")
-
-                if self.apply_wis:
-                    self.rho = tf.placeholder(tf.float32, shape=(train_batch_size, n_actions), name="wis_weights")
-                    self.loss = tf.reduce_mean(tf.multiply(self.rho, self.SE), name="loss")
-                else:
-                    self.loss = tf.reduce_mean(self.SE, name="loss")
+            self.__define_loss(train_batch_size, n_actions, huber_loss)
 
             self.global_step = tf.Variable(0, trainable=False)
             if decay_lr:
@@ -110,6 +101,8 @@ class ValueFunctionDQN:
 
             if self.summaries_path is not None:
                 self.__variable_summaries(self.loss, "loss", scalar_only=True)
+                self.__variable_summaries(self.reward, "reward", scalar_only=True)
+                self.__variable_summaries(self.epsilon, "epsilon", scalar_only=True)
                 self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True)
 
         self.__create_checkpoints_saver()
@@ -124,6 +117,28 @@ class ValueFunctionDQN:
             self.merged_summaries = None
 
         self.session = None
+
+    def __define_summarizables(self, epsilon0=0.0):
+        # Properties to be saved as summaries for later Tensorboard visualization
+        self.reward_ph = tf.placeholder(tf.float32, name="reward_placeholder")
+        self.epsilon_ph = tf.placeholder(tf.float32, name="epsilon_placeholder")
+        self.reward = tf.Variable(0.0, name="reward")  # Current reward
+        self.epsilon = tf.Variable(epsilon0, name="epsilon")  # Current epsilon, as per Epsilon-greedy policy
+        self.reward_update_op = self.reward.assign(self.reward_ph)
+        self.epsilon_update_op = self.epsilon.assign(self.epsilon_ph)
+
+    def __define_loss(self, train_batch_size, n_actions, huber_loss=False):
+        if huber_loss:
+            self.loss = self.__huber_loss(self.train_targets, self.prediction)
+        else:
+            self.E = tf.subtract(self.train_targets, self.prediction, name="Error")
+            self.SE = tf.square(self.E, name="SquaredError")
+
+            if self.apply_wis:
+                self.rho = tf.placeholder(tf.float32, shape=(train_batch_size, n_actions), name="wis_weights")
+                self.loss = tf.reduce_mean(tf.multiply(self.rho, self.SE), name="loss")
+            else:
+                self.loss = tf.reduce_mean(self.SE, name="loss")
 
     def __create_checkpoints_saver(self):
         if self.checkpoints_dir is not None or self.restoration_checkpoint is not None:
@@ -280,6 +295,14 @@ class ValueFunctionDQN:
     def close_summary_file(self):
         if self.summaries_path is not None:
             self.train_writer.close()
+
+    def update_summarizables(self, reward, epsilon):
+        self.__init_tf_session()  # Make sure the Tensorflow session exists
+
+        feed_dict = {self.reward_ph: reward, self.epsilon_ph: epsilon}
+        fetches = [self.reward_update_op, self.epsilon_update_op]
+
+        self.session.run(fetches, feed_dict=feed_dict)
 
 
 class DuelingNetwork:

@@ -125,8 +125,8 @@ class ExperimentsManager:
             avg_rwds = self.Avg_Rwd_per_ep[self.exp, 0:self.ep+1]
             idx_unsolved_eps = np.where(avg_rwds < self.min_avg_rwd)
             i_last_low_rwd = self.ep
-            if not idx_unsolved_eps:
-                i_last_low_rwd = np.max(idx_unsolved_eps)
+            if idx_unsolved_eps[0].size > 0:
+                i_last_low_rwd = np.amax(idx_unsolved_eps)
             n_solved_eps = self.ep - i_last_low_rwd
 
             duration_ms = 0
@@ -178,6 +178,7 @@ class ExperimentsManager:
 
             if save_embedding:
                 self.embeddings_metadata_file.write("{:2.6f}\n".format(self.agent.current_value))
+        self.agent.value_func.update_summarizables(reward, self.agent.eps)
         return loss_v, self.agent.total_reward
 
     def __maybe_collect_embedding_thumbnail(self, env, saveembedding=False):
@@ -426,7 +427,7 @@ class ExperimentsManager:
                                                   checkpoint_save_period_epochs=ckpt_sv_period_epochs,
                                                   apply_wis=self.per_apply_importance_sampling,
                                                   restoration_checkpoint=self.restoration_checkpoint,
-                                                  n_embeddings=n_embeddings)
+                                                  n_embeddings=n_embeddings, epsilon0=0.9)
                 self.__create_embeddings_metadata_file(n_embeddings > 0, "_{}".format(value_function.scope))
 
                 self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
