@@ -31,10 +31,10 @@ class DumbValueFunction:
 
 class ValueFunctionDQN:
     def __init__(self, scope="MyValueFunctionEstimator", state_dim=2, n_actions=3, train_batch_size=64,
-                 learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, learning_rate_end=None, decay_steps=1,
-                 huber_loss=False, summaries_path=None, reset_default_graph=False, checkpoints_dir=None,
-                 apply_wis=False, checkpoint_save_period_epochs=40000, restoration_checkpoint=None, n_embeddings=0,
-                 epsilon0=0.0, summarize_internal_excitations=False):
+                 learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, learning_rate_end=None,
+                 n_lr_decay_epochs=1, huber_loss=False, summaries_path=None, reset_default_graph=False,
+                 checkpoints_dir=None, apply_wis=False, checkpoint_save_period_epochs=40000,
+                 restoration_checkpoint=None, n_embeddings=0, epsilon0=0.0, summarize_internal_excitations=False):
         # Input check
         if hidden_layers_size is None:
             hidden_layers_size = [128, 64]  # Default ANN architecture
@@ -51,7 +51,6 @@ class ValueFunctionDQN:
         self.trained_b = []
         self.learning_rate = learning_rate
         self.train_batch_size = train_batch_size
-        self.n_train_epochs = 0
         self.summaries_path = summaries_path
         self.train_writer = None
         self.checkpoints_dir = checkpoints_dir
@@ -61,6 +60,7 @@ class ValueFunctionDQN:
         self.n_embeddings = n_embeddings
         self.summarize_internal_excitations = summarize_internal_excitations
         self.global_step = 0
+        self.decay_lr = decay_lr
 
         # Apply Weighted Importance Sampling. See "Weighted importance sampling for off-policy learning with linear
         # function approximation". In Advances in Neural Information Processing Systems, pp. 3014–3022, 2014
@@ -74,6 +74,8 @@ class ValueFunctionDQN:
 
         # Build Tensorflow graph
         with tf.variable_scope(self.scope):
+            self.n_train_epochs = tf.Variable(0, trainable=False)
+
             # Inputs, weights, biases and targets of the ANN
             self.x = tf.placeholder(tf.float32, shape=(None, state_dim), name="x")
             self.train_targets = tf.placeholder(tf.float32, shape=(None, n_actions), name="train_targets")
@@ -110,13 +112,13 @@ class ValueFunctionDQN:
 
             self.__define_loss(train_batch_size, n_actions, huber_loss)
 
-            if decay_lr:
-                lr0 = self.learning_rate
-                self.learning_rate = tf.train.exponential_decay(lr0, self.global_step, decay_steps,
-                                                                learning_rate_end / lr0)
+            if self.decay_lr:
+                decay_rate = learning_rate_end / self.learning_rate
+                self.learning_rate = tf.train.exponential_decay(self.learning_rate, self.n_train_epochs,
+                                                                n_lr_decay_epochs, decay_rate)
                 # self.learning_rate = tf.train.polynomial_decay(lr0, self.global_step, 300000, learning_rate_end)
             self.opt_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
-            self.train_op = self.opt_op.minimize(self.loss)
+            self.train_op = self.opt_op.minimize(self.loss, global_step=self.n_train_epochs)
 
             self.__create_embedding_ops(last_hidden)
 
@@ -135,7 +137,8 @@ class ValueFunctionDQN:
                     self.__variable_summaries(tf.squeeze(tf.slice(self.x, [0, i], [1, 1])),
                                               "observation_"+str(i), scalar_only=True, collections=['state'])
                 self.__variable_summaries(self.epsilon, "epsilon", scalar_only=True, collections=['progress'])
-                self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True, collections=['progress'])
+                self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True,
+                                          collections=['progress'])
 
         self.__create_checkpoints_saver()
 
@@ -235,7 +238,7 @@ class ValueFunctionDQN:
                 self.saver.restore(self.session, self.restoration_checkpoint)
                 print("Model restored from checkpoint at {}.".format(self.restoration_checkpoint))
 
-    def predict(self, states, global_step=None, use_old_params=False, saveembedding=False, summaries_to_save=[]):
+    def predict(self, states, global_step=None, use_old_params=False, saveembedding=False, summaries_to_save=None):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
         if global_step is not None:
             self.global_step = global_step
@@ -249,7 +252,7 @@ class ValueFunctionDQN:
         if saveembedding and self.n_embeddings > 0:
             fetches.append([self.save_embedding_op])
 
-        if self.summaries_path is not None and summaries_to_save:
+        if self.summaries_path is not None and summaries_to_save is not None:
             if "progress" in summaries_to_save:
                 fetches.append(self.progress_summaries)
             if "state" in summaries_to_save:
@@ -260,15 +263,23 @@ class ValueFunctionDQN:
         if saveembedding and self.n_embeddings > 0:
             self.increment_next_embedding_op.eval(session=self.session)
 
-        if self.summaries_path is not None and summaries_to_save:
+        if self.summaries_path is not None and summaries_to_save is not None:
             for k in range(len(summaries_to_save)):
                 if summaries_to_save[k] in ["progress", "state"]:
                     self.train_writer.add_summary(q[-k-1], global_step=self.global_step)
 
         return q[0]
 
-    def train(self, states, targets, w=None, summaries_to_save=[]):
+    def __maybe_decay_learning_rate(self):
+        if self.decay_lr:
+            self.learning_rate.eval(session=self.session)
+            pass
+            # self.learning_rate = tf.train.exponential_decay(self.starter_learning_rate, self.global_step,
+            #                                                self.decay_steps, self.decay_rate)
+
+    def train(self, states, targets, w=None, summaries_to_save=None):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
+        self.__maybe_decay_learning_rate()
 
         feed_dict = {self.x: states, self.train_targets: targets}
         if self.apply_wis:
@@ -276,20 +287,23 @@ class ValueFunctionDQN:
 
         fetches = [self.loss, self.train_op, self.E]
 
-        if self.summaries_path is not None and "train" in summaries_to_save:
+        if self.summaries_path is not None and summaries_to_save is not None and "train" in summaries_to_save:
             fetches.append(self.train_summaries)
 
         values = self.session.run(fetches, feed_dict=feed_dict)
 
-        if self.summaries_path is not None and "train" in summaries_to_save:
+        if self.summaries_path is not None and summaries_to_save is not None and "train" in summaries_to_save:
             self.train_writer.add_summary(values[-1], global_step=self.global_step)
 
-        if self.checkpoints_dir is not None:
-            if self.n_train_epochs > 0 and self.n_train_epochs % self.checkpoint_save_period_epochs == 0:
-                self.save()
+        self.__maybe_save_checkpoint()
 
-        self.n_train_epochs += 1
         return values[0], values[2]
+
+    def __maybe_save_checkpoint(self):
+        if self.checkpoints_dir is not None:
+            nte = self.n_train_epochs.eval(session=self.session)
+            if nte > 0 and nte % self.checkpoint_save_period_epochs == 0:
+                self.save()
 
     def save(self):
         self.saver.save(self.session, self.checkpoint_pathname, global_step=self.global_step)

@@ -31,7 +31,7 @@ class ExperienceReplayAgent:
         if self.memory is not None:
             experience = (state, action, reward, state_next, done)
             if self.per_proportional_prioritization:
-                self.memory.add(max(self.prio_max, self.per_epsilon), experience)
+                self.memory.add(max([self.prio_max, self.per_epsilon]), experience)
             else:
                 self.memory.add(experience)
         else:
@@ -72,12 +72,13 @@ class AgentEpsGreedy(ExperienceReplayAgent):
         self.loss_v = 0                         # Loss value of the last training epoch
         self.step = 0                           # Number of times the agent's act method has been successfully invoked.
 
-    def act(self, global_step, state=None, saveembedding=False, summaries_to_save=[]):
+    def act(self, global_step, state=None, saveembedding=False, summaries_to_save=None):
         """
         Choose an action.
         :param  state:  ndarray describing the state the action will be chosen on. If not provided, the agent will act
                         from the current state.
-                global_step:    An int indicating the overall global step of the simulation.
+        :param  global_step:    An int indicating the overall global step of the simulation.
+        :param  summaries_to_save: A list containing the collections for which to store summaries of the value function.
         :param saveembedding:   Whether to command the value function to store an embedding of the provided state. 
         :return: An integer denoting the chosen action.
         """
@@ -104,7 +105,7 @@ class AgentEpsGreedy(ExperienceReplayAgent):
         self.step = global_step
         return a
 
-    def train(self, states, targets, w=None, summaries_to_save=[]):
+    def train(self, states, targets, w=None, summaries_to_save=None):
         loss, errors = self.value_func.train(states, targets, w=w, summaries_to_save=summaries_to_save)
         self.loss_v = loss
         return loss, errors
@@ -123,7 +124,7 @@ class AgentEpsGreedy(ExperienceReplayAgent):
 
         return states_b, actions_b, rewards_b, states_n_b, done_b
 
-    def train_on_experience(self, batch_size, discount, double_dqn=False, summaries_to_save=[]):
+    def train_on_experience(self, batch_size, discount, double_dqn=False, summaries_to_save=None):
         loss_v = 0
         if self.memory is None:
             raise NotImplementedError("Please provide an Experience Replay memory.")
@@ -166,13 +167,13 @@ class RandomAgent(AgentEpsGreedy):
                                 per_proportional_prioritization=True)
         self.memory = SumTree(capacity=100000)
 
-    def act(self, global_step, state = None, saveembedding = False, summaries_to_save = []):
+    def act(self, global_step, state=None, saveembedding=False, summaries_to_save=None):
         a = np.random.choice(self.n_actions)
         self.current_value = 0
         self.step += 1
         return a
 
-    def train(self, states, targets, w=None, summaries_to_save=[]):
+    def train(self, states, targets, w=None, summaries_to_save=None):
         errors = np.zeros(shape=(len(states), self.n_actions))
         loss = 0
         return loss, errors
