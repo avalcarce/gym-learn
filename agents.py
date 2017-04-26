@@ -166,13 +166,13 @@ class RandomAgent(AgentEpsGreedy):
                                 per_proportional_prioritization=True)
         self.memory = SumTree(capacity=100000)
 
-    def act(self, state=None, saveembedding=False):
+    def act(self, global_step, state = None, saveembedding = False, summaries_to_save = []):
         a = np.random.choice(self.n_actions)
         self.current_value = 0
         self.step += 1
         return a
 
-    def train(self, states, targets=None, w=None):
+    def train(self, states, targets, w=None, summaries_to_save=[]):
         errors = np.zeros(shape=(len(states), self.n_actions))
         loss = 0
         return loss, errors
