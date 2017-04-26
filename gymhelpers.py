@@ -25,12 +25,13 @@ if platform == "linux" or platform == "linux2":
 class ExperimentsManager:
     def __init__(self, env_name, agent_value_function_hidden_layers_size, results_dir_prefix=None, summaries_path=None,
                  figures_dir=None, discount=0.99, decay_eps=0.995, eps_min=0.0001, learning_rate=1E-4, decay_lr=False,
-                 max_step=10000, replay_memory_max_size=100000, ep_verbose=False, exp_verbose=True, batch_size=64,
-                 upload_last_exp=False, double_dqn=False, target_params_update_period_steps=1, gym_api_key="",
-                 gym_algorithm_id=None, checkpoints_dir='ChkPts', min_avg_rwd=-110, replay_period_steps=1,
-                 per_proportional_prioritization=False, per_apply_importance_sampling=False, per_alpha=0.6,
-                 per_beta0=0.4, render_environment=False, checkpoint_save_period_steps=None,
-                 restoration_checkpoint=None, kpis_dir=None, use_long_dirnames=False):
+                 learning_rate_end=None, max_step=10000, replay_memory_max_size=100000, ep_verbose=False,
+                 exp_verbose=True, batch_size=64, upload_last_exp=False, double_dqn=False,
+                 target_params_update_period_steps=1, gym_api_key="", gym_algorithm_id=None, checkpoints_dir='ChkPts',
+                 min_avg_rwd=-110, replay_period_steps=1, per_proportional_prioritization=False,
+                 per_apply_importance_sampling=False, per_alpha=0.6, per_beta0=0.4, render_environment=False,
+                 checkpoint_save_period_steps=None, restoration_checkpoint=None, kpis_dir=None,
+                 use_long_dirnames=False):
         self.env_name = env_name
         self.results_dir_prefix = results_dir_prefix
         self.render_environment = render_environment
@@ -43,6 +44,7 @@ class ExperimentsManager:
         self.eps_min = eps_min
         self.learning_rate = learning_rate
         self.decay_lr = decay_lr
+        self.learning_rate_end = learning_rate_end
         self.max_step = max_step
         self.n_ep = None
         self.replay_period_steps = replay_period_steps
@@ -436,9 +438,9 @@ class ExperimentsManager:
                 value_function = ValueFunctionDQN(scope="q", state_dim=state_dim, n_actions=n_actions,
                                                   train_batch_size=self.batch_size, learning_rate=self.learning_rate,
                                                   hidden_layers_size=self.agent_value_function_hidden_layers_size,
-                                                  decay_lr=self.decay_lr, huber_loss=False,
-                                                  summaries_path=self.summaries_path_current,
-                                                  reset_default_graph=True,
+                                                  decay_lr=self.decay_lr, learning_rate_end=self.learning_rate_end,
+                                                  decay_steps=n_ep*self.max_step, huber_loss=False,
+                                                  summaries_path=self.summaries_path_current, reset_default_graph=True,
                                                   checkpoints_dir=self.checkpoints_dir_current,
                                                   checkpoint_save_period_epochs=ckpt_sv_period_epochs,
                                                   apply_wis=self.per_apply_importance_sampling,

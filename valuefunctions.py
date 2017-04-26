@@ -31,9 +31,10 @@ class DumbValueFunction:
 
 class ValueFunctionDQN:
     def __init__(self, scope="MyValueFunctionEstimator", state_dim=2, n_actions=3, train_batch_size=64,
-                 learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, huber_loss=False, summaries_path=None,
-                 reset_default_graph=False, checkpoints_dir=None, apply_wis=False, checkpoint_save_period_epochs=40000,
-                 restoration_checkpoint=None, n_embeddings=0, epsilon0=0.0, summarize_internal_excitations=False):
+                 learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, learning_rate_end=None, decay_steps=1,
+                 huber_loss=False, summaries_path=None, reset_default_graph=False, checkpoints_dir=None,
+                 apply_wis=False, checkpoint_save_period_epochs=40000, restoration_checkpoint=None, n_embeddings=0,
+                 epsilon0=0.0, summarize_internal_excitations=False):
         # Input check
         if hidden_layers_size is None:
             hidden_layers_size = [128, 64]  # Default ANN architecture
@@ -111,8 +112,9 @@ class ValueFunctionDQN:
 
             if decay_lr:
                 lr0 = self.learning_rate
-                # self.learning_rate = tf.train.exponential_decay(lr0, self.global_step, 3000 * 200, 1e-5 / lr0)
-                self.learning_rate = tf.train.polynomial_decay(lr0, self.global_step, 300000, 1E-5)
+                self.learning_rate = tf.train.exponential_decay(lr0, self.global_step, decay_steps,
+                                                                learning_rate_end / lr0)
+                # self.learning_rate = tf.train.polynomial_decay(lr0, self.global_step, 300000, learning_rate_end)
             self.opt_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
             self.train_op = self.opt_op.minimize(self.loss)
 
@@ -272,10 +274,7 @@ class ValueFunctionDQN:
         if self.apply_wis:
             feed_dict[self.rho] = np.transpose(np.tile(w, (self.layers_size[-1], 1)))
 
-        if self.summaries_path is not None and self.n_train_epochs % 2000 == 0:
-            fetches = [self.loss, self.train_op, self.E, self.train_summaries]
-        else:
-            fetches = [self.loss, self.train_op, self.E]
+        fetches = [self.loss, self.train_op, self.E]
 
         if self.summaries_path is not None and "train" in summaries_to_save:
             fetches.append(self.train_summaries)
