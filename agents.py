@@ -1,4 +1,6 @@
 import numpy as np
+from gym_learn.valuefunctions import DumbValueFunction
+from gym_learn.datastructures import SumTree
 
 
 class ExperienceReplayAgent:
@@ -70,11 +72,12 @@ class AgentEpsGreedy(ExperienceReplayAgent):
         self.loss_v = 0                         # Loss value of the last training epoch
         self.step = 0                           # Number of times the agent's act method has been successfully invoked.
 
-    def act(self, state=None, saveembedding=False):
+    def act(self, global_step, state=None, saveembedding=False, summaries_to_save=[]):
         """
         Choose an action.
-        :param state:   ndarray describing the state the action will be chosen on. If not provided, the agent will act
+        :param  state:  ndarray describing the state the action will be chosen on. If not provided, the agent will act
                         from the current state.
+                global_step:    An int indicating the overall global step of the simulation.
         :param saveembedding:   Whether to command the value function to store an embedding of the provided state. 
         :return: An integer denoting the chosen action.
         """
@@ -86,7 +89,8 @@ class AgentEpsGreedy(ExperienceReplayAgent):
                 raise TypeError("Missing 1 required positional argument when the agent's state is unknown: 'state'")
 
         # Evaluate actions
-        action_values = self.value_func.predict([state], saveembedding=saveembedding)[0]
+        action_values = self.value_func.predict([state], global_step=global_step, saveembedding=saveembedding,
+                                                summaries_to_save=summaries_to_save)[0]
         a_max = np.argmax(action_values)
 
         if self.explore:
@@ -97,16 +101,16 @@ class AgentEpsGreedy(ExperienceReplayAgent):
             a = a_max
 
         self.current_value = action_values[a]
-        self.step += 1
+        self.step = global_step
         return a
 
-    def train(self, states, targets, w=None):
-        loss, errors = self.value_func.train(states, targets, w=w)
+    def train(self, states, targets, w=None, summaries_to_save=[]):
+        loss, errors = self.value_func.train(states, targets, w=w, summaries_to_save=summaries_to_save)
         self.loss_v = loss
         return loss, errors
 
     def predict_q_values(self, states, use_old_params=False):
-        return self.value_func.predict(states, use_old_params)
+        return self.value_func.predict(states, use_old_params=use_old_params)
 
     @staticmethod
     def __format_experience(experience):
@@ -119,7 +123,7 @@ class AgentEpsGreedy(ExperienceReplayAgent):
 
         return states_b, actions_b, rewards_b, states_n_b, done_b
 
-    def train_on_experience(self, batch_size, discount, double_dqn=False):
+    def train_on_experience(self, batch_size, discount, double_dqn=False, summaries_to_save=[]):
         loss_v = 0
         if self.memory is None:
             raise NotImplementedError("Please provide an Experience Replay memory.")
@@ -142,9 +146,9 @@ class AgentEpsGreedy(ExperienceReplayAgent):
                 targets[j, action] = targets_b[j]
 
             if self.per_apply_importance_sampling:
-                loss_v, errors = self.train(states_b, targets, w=w)
+                loss_v, errors = self.train(states_b, targets, w=w, summaries_to_save=summaries_to_save)
             else:
-                loss_v, errors = self.train(states_b, targets)
+                loss_v, errors = self.train(states_b, targets, summaries_to_save=summaries_to_save)
             errors = errors[np.arange(len(errors)), actions_b]
 
             if self.per_proportional_prioritization:  # Update transition priorities
@@ -154,3 +158,24 @@ class AgentEpsGreedy(ExperienceReplayAgent):
                 self.prio_max = max(priorities.max(), self.prio_max)
 
         return loss_v
+
+
+class RandomAgent(AgentEpsGreedy):
+    def __init__(self, n_actions):
+        AgentEpsGreedy.__init__(self, n_actions=n_actions, value_function_model=DumbValueFunction(n_actions),
+                                per_proportional_prioritization=True)
+        self.memory = SumTree(capacity=100000)
+
+    def act(self, state=None, saveembedding=False):
+        a = np.random.choice(self.n_actions)
+        self.current_value = 0
+        self.step += 1
+        return a
+
+    def train(self, states, targets=None, w=None):
+        errors = np.zeros(shape=(len(states), self.n_actions))
+        loss = 0
+        return loss, errors
+
+    def predict_q_values(self, states, use_old_params=False):
+        return np.zeros(shape=(len(states), self.n_actions))

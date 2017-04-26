@@ -79,17 +79,15 @@ class ExperimentsManager:
         self.step = 0  # Current step per episode
         self.ep = 0
         self.exp = 0
-        self.step_durations_s = np.zeros(shape=self.max_step, dtype=float)
 
         self.min_avg_rwd = min_avg_rwd     # Minimum average reward to consider the problem as solved
         self.n_avg_ep = 100         # Number of consecutive episodes to calculate the average reward
 
         self.conf_msg = "\nEXECUTING EXPERIMENT {} OF {} IN ENVIRONMENT {}."
-        self.episode_progress_msg = "Step {:5d}/{:5d}. Avg step duration: {:3.6f} ms." + \
-                                    " Loss = {:3.2e}."
-        self.exp_progress_msg = "Exp {:3d}. Ep {:5d}, Rwd={:1.4f} (mean={:1.4f} over {:3d} episodes)." + \
-                                " {} exceeded in {:4d} eps. Loss={:1.2e} (avg={:1.2e}). Agent epsilon={:3.2f} %." + \
-                                " Average step duration: {:2.6f} ms."
+        self.episode_progress_msg = "Step {:5d}/{:5d}. Loss = {:3.2e}."
+        self.exp_progress_msg = "Exp {:2d}. Ep {:5d}, Rwd={:1.4f} ({:1.4f}/{:1.4f}/\033[1m{:1.4f}\033[0m/{:1.4f} " + \
+                                "over {:3d} episodes). {} exceeded in {:4d} eps. Loss={:1.2e} (avg={:1.2e}). " + \
+                                "Agent epsilon={:3.2f} %. Avg episode: {:2.6f} ms."
         self.exps_conf_str = ""
 
         self.dpi = 400  # Plotting option
@@ -107,35 +105,40 @@ class ExperimentsManager:
         self.rwd_exps_avg_movstd = np.zeros(self.rwd_exps_avg.shape[0])
         self.rwd_exps_avg_percentile5 = np.zeros(self.rwd_exps_avg.shape[0])
         self.rwd_exps_avg_percentile95 = np.zeros(self.rwd_exps_avg.shape[0])
+        self.episode_duration_s = np.zeros(shape=(1, 1000), dtype=float)
 
     def __print_episode_progress(self, loss_v):
         if self.ep_verbose:
             if self.step > 0 and (self.step+1) % 20 == 0:
-                print(self.episode_progress_msg.format(self.step, self.max_step,
-                                                       np.mean(self.step_durations_s[self.ep, 0:self.step]) * 1000,
-                                                       loss_v))
+                print(self.episode_progress_msg.format(self.step, self.max_step, loss_v))
 
     def __print_experiment_progress(self):
         if self.exp_verbose:
-            rwd = self.Rwd_per_ep_v[self.exp, self.ep]
-            avg_rwd = self.Avg_Rwd_per_ep[self.exp, self.ep]
-            loss = self.Loss_per_ep_v[self.exp, self.ep]
-            avg_loss = self.Avg_Loss_per_ep[self.exp, self.ep]
+            if self.ep % 8 == 0:
+                rwd = self.Rwd_per_ep_v[self.exp, self.ep]
+                ep0 = max(0, self.ep - 99)
+                rwd_min = np.amin(self.Rwd_per_ep_v[self.exp, ep0:self.ep + 1])
+                rwd_max = np.amax(self.Rwd_per_ep_v[self.exp, ep0:self.ep + 1])
+                rwd_std = np.std(self.Rwd_per_ep_v[self.exp, ep0:self.ep + 1])
+                avg_rwd = self.Avg_Rwd_per_ep[self.exp, self.ep]
+                loss = self.Loss_per_ep_v[self.exp, self.ep]
+                avg_loss = self.Avg_Loss_per_ep[self.exp, self.ep]
 
-            avg_rwds = self.Avg_Rwd_per_ep[self.exp, 0:self.ep+1]
-            idx_unsolved_eps = np.where(avg_rwds < self.min_avg_rwd)
-            i_last_low_rwd = self.ep
-            if idx_unsolved_eps[0].size > 0:
-                i_last_low_rwd = np.amax(idx_unsolved_eps)
-            n_solved_eps = self.ep - i_last_low_rwd
+                avg_rwds = self.Avg_Rwd_per_ep[self.exp, 0:self.ep+1]
+                idx_unsolved_eps = np.where(avg_rwds < self.min_avg_rwd)
+                i_last_low_rwd = self.ep
+                if idx_unsolved_eps[0].size > 0:
+                    i_last_low_rwd = np.amax(idx_unsolved_eps)
+                n_solved_eps = self.ep - i_last_low_rwd
 
-            duration_ms = 0
-            if self.ep > 0:
-                duration_ms = np.mean(self.step_durations_s[0:self.ep, :]) * 1000
+                avg_episode_duration_ms = 0
+                if self.ep > 0:
+                    avg_episode_duration_ms = np.mean(self.episode_duration_s[self.exp, ep0:self.ep + 1]) * 1000
 
-            print(
-                self.exp_progress_msg.format(self.exp, self.ep, rwd, avg_rwd, self.n_avg_ep, self.min_avg_rwd,
-                                             n_solved_eps, loss, avg_loss, self.agent.eps*100, duration_ms))
+                print(
+                    self.exp_progress_msg.format(self.exp, self.ep, rwd, rwd_min, rwd_max, avg_rwd, rwd_std,
+                                                 self.n_avg_ep, self.min_avg_rwd, n_solved_eps, loss, avg_loss,
+                                                 self.agent.eps*100, avg_episode_duration_ms))
 
     def __maybe_update_target_estimator(self):
         if self.global_step % self.target_params_update_period_steps == 0:
@@ -144,6 +147,7 @@ class ExperimentsManager:
                 print("Copied model parameters to target network.")
 
     def run_episode(self, env, train=True):
+        t = time.time()
         self.agent.state = env.reset()
         done = False
         self.agent.total_reward = 0
@@ -155,30 +159,40 @@ class ExperimentsManager:
             self.__maybe_update_target_estimator()
             self.agent.anneal_per_importance_sampling(self.step, self.max_step)
 
-            t = time.time()
             self.__print_episode_progress(loss_v)
 
             if done:
                 break
 
+            summaries_to_save = []
+            if (self.global_step + 1) % self.max_step == 0:
+                summaries_to_save.append("progress")
+            if np.random.uniform() <= self.prob_sample_state:
+                summaries_to_save.append("state")
+
             save_embedding = self.global_step in self.embeddings_global_steps
             self.__maybe_collect_embedding_thumbnail(env, save_embedding)
-            action = self.agent.act(self.agent.state, saveembedding=save_embedding)
+            action = self.agent.act(self.global_step, state=self.agent.state, saveembedding=save_embedding,
+                                    summaries_to_save=summaries_to_save)
             self.agent_value_function[self.exp, self.ep, self.step] = self.agent.current_value
-            self.global_step += 1
             state_next, reward, done, info = env.step(action)
             self.agent.total_reward += reward
 
             self.agent.save_experience(self.agent.state, action, reward, state_next, done)
             if train and self.global_step % self.replay_period_steps == 0:
-                loss_v = self.agent.train_on_experience(self.batch_size, self.discount, double_dqn=self.double_dqn)
+                summaries_to_save = []
+                if self.global_step % 10000 == 0:
+                    summaries_to_save.append("train")
+                loss_v = self.agent.train_on_experience(self.batch_size, self.discount,
+                                                        double_dqn=self.double_dqn, summaries_to_save=summaries_to_save)
 
             self.agent.state = copy.copy(state_next)
-            self.step_durations_s[self.ep, self.step] = time.time() - t  # Time elapsed during this step
 
             if save_embedding:
                 self.embeddings_metadata_file.write("{:2.6f}\n".format(self.agent.current_value))
-        self.agent.value_func.update_summarizables(reward, self.agent.eps)
+            self.global_step += 1
+        self.agent.value_func.update_summarizables(self.agent.total_reward, self.agent.eps)
+        self.episode_duration_s[self.exp, self.ep] = time.time() - t  # Time elapsed during this episode
         return loss_v, self.agent.total_reward
 
     def __maybe_collect_embedding_thumbnail(self, env, saveembedding=False):
@@ -203,6 +217,8 @@ class ExperimentsManager:
     def run_experiment(self, env, n_ep, stop_training_min_avg_rwd=None, n_min_training_episodes=100):
         self.n_ep = n_ep
         self.global_step = 0
+        self.prob_sample_state = min([1, 2000 / (self.max_step * n_ep)])  # Sample 2000 summaries of the current state
+
         train = True
         # One experiment is composed of n_ep sequential episodes
         for self.ep in range(n_ep):
@@ -386,7 +402,7 @@ class ExperimentsManager:
         self.Avg_Loss_per_ep = np.zeros((n_exps, n_ep))
         self.Agent_Epsilon_per_ep = np.zeros((n_exps, n_ep))
         self.agent_value_function = np.zeros((n_exps, n_ep, self.max_step))
-        self.step_durations_s = np.zeros(shape=(n_ep, self.max_step), dtype=float)
+        self.episode_duration_s = np.zeros(shape=(n_exps, n_ep), dtype=float)
         self.__update_embeddings_configuration(n_ep, n_embeddings)
 
         n_actions, state_dim = self.__get_problem_dimensionality()
@@ -486,8 +502,8 @@ class ExperimentsManager:
                                                 mem.total/(1024 ** 3), max_mem_size_av, max_mem_size_tot))
 
     def print_experiment_summary(self):
-        duration_ms = np.mean(self.step_durations_s) * 1000
-        print("Average step duration: {:2.6f} ms".format(duration_ms))
+        duration_ms = np.mean(self.episode_duration_s[self.exp, :]) * 1000
+        print("Average episode duration: {:2.6f} ms".format(duration_ms))
 
     def calculate_avg_rwd(self):
         self.rwd_exps_avg = np.mean(self.Rwd_per_ep_v, axis=0)  # Rwd averaged over all experiments

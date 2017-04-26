@@ -5,11 +5,35 @@ from tensorflow.contrib.tensorboard.plugins import projector
 import numpy as np
 
 
+class DumbValueFunction:
+    def __init__(self, n_actions):
+        self.n_actions = n_actions
+        self.scope = "dumb"
+        pass
+
+    def update_old_params(self):
+        pass
+
+    def predict(self, states, use_old_params=False):
+        return np.zeros(shape=(len(states), self.n_actions))
+
+    def train(self, states, targets, w=None):
+        errors = np.zeros(shape=(len(states), self.n_actions))
+        loss = 0
+        return loss, errors
+
+    def update_summarizables(self, reward, epsilon):
+        pass
+
+    def save(self):
+        pass
+
+
 class ValueFunctionDQN:
     def __init__(self, scope="MyValueFunctionEstimator", state_dim=2, n_actions=3, train_batch_size=64,
                  learning_rate=1e-4, hidden_layers_size=None, decay_lr=False, huber_loss=False, summaries_path=None,
                  reset_default_graph=False, checkpoints_dir=None, apply_wis=False, checkpoint_save_period_epochs=40000,
-                 restoration_checkpoint=None, n_embeddings=0, epsilon0=0.0):
+                 restoration_checkpoint=None, n_embeddings=0, epsilon0=0.0, summarize_internal_excitations=False):
         # Input check
         if hidden_layers_size is None:
             hidden_layers_size = [128, 64]  # Default ANN architecture
@@ -34,6 +58,8 @@ class ValueFunctionDQN:
         self.checkpoint_save_period_epochs = checkpoint_save_period_epochs
         self.restoration_checkpoint = restoration_checkpoint
         self.n_embeddings = n_embeddings
+        self.summarize_internal_excitations = summarize_internal_excitations
+        self.global_step = 0
 
         # Apply Weighted Importance Sampling. See "Weighted importance sampling for off-policy learning with linear
         # function approximation". In Advances in Neural Information Processing Systems, pp. 3014–3022, 2014
@@ -74,8 +100,8 @@ class ValueFunctionDQN:
             if summaries_path is not None:
                 with tf.name_scope('params_summaries'):
                     for l in range(len(self.layers_size) - 1):
-                        self.__variable_summaries(self.weights[l], "w" + str(l), histogram=True)
-                        self.__variable_summaries(self.biases[l], "b" + str(l), histogram=True)
+                        self.__variable_summaries(self.weights[l], "w" + str(l), histogram=True, collections=['train'])
+                        self.__variable_summaries(self.biases[l], "b" + str(l), histogram=True, collections=['train'])
 
             # Interconnection of the various ANN nodes
             self.prediction, last_hidden = self.__model(self.x)
@@ -83,11 +109,12 @@ class ValueFunctionDQN:
 
             self.__define_loss(train_batch_size, n_actions, huber_loss)
 
-            self.global_step = tf.Variable(0, trainable=False)
             if decay_lr:
-                self.learning_rate = tf.train.exponential_decay(1e-4, self.global_step, 3000 * 200, 1e-5 / 1e-4)
+                lr0 = self.learning_rate
+                # self.learning_rate = tf.train.exponential_decay(lr0, self.global_step, 3000 * 200, 1e-5 / lr0)
+                self.learning_rate = tf.train.polynomial_decay(lr0, self.global_step, 300000, 1E-5)
             self.opt_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
-            self.train_op = self.opt_op.minimize(self.loss, global_step=self.global_step)
+            self.train_op = self.opt_op.minimize(self.loss)
 
             self.__create_embedding_ops(last_hidden)
 
@@ -100,21 +127,28 @@ class ValueFunctionDQN:
                 self.update_ops.append(self.biases_old[l].assign(self.biases[l]))
 
             if self.summaries_path is not None:
-                self.__variable_summaries(self.loss, "loss", scalar_only=True)
-                self.__variable_summaries(self.reward, "reward", scalar_only=True)
-                self.__variable_summaries(self.epsilon, "epsilon", scalar_only=True)
-                self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True)
+                self.__variable_summaries(self.loss, "loss", scalar_only=True, collections=['train'])
+                self.__variable_summaries(self.reward, "reward", scalar_only=True, collections=['progress'])
+                for i in range(state_dim):
+                    self.__variable_summaries(tf.squeeze(tf.slice(self.x, [0, i], [1, 1])),
+                                              "observation_"+str(i), scalar_only=True, collections=['state'])
+                self.__variable_summaries(self.epsilon, "epsilon", scalar_only=True, collections=['progress'])
+                self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True, collections=['progress'])
 
         self.__create_checkpoints_saver()
 
         if self.summaries_path is not None:
-            self.merged_summaries = tf.summary.merge_all()
+            self.train_summaries = tf.summary.merge_all(key='train')
+            self.state_summaries = tf.summary.merge_all(key='state')
+            self.progress_summaries = tf.summary.merge_all(key='progress')
             self.summaries_path += "_{}".format(self.scope)
             if not os.path.exists(self.summaries_path):
                 os.makedirs(self.summaries_path)
             self.train_writer = tf.summary.FileWriter(self.summaries_path, graph=self.graph)
         else:
-            self.merged_summaries = None
+            self.train_summaries = None
+            self.state_summaries = None
+            self.progress_summaries = None
 
         self.session = None
 
@@ -171,11 +205,11 @@ class ValueFunctionDQN:
             z.append(tf.matmul(hidden[-1], self.weights[-1]) + self.biases[-1])
 
         if not use_old_params:
-            if self.summaries_path is not None:
+            if self.summaries_path is not None and self.summarize_internal_excitations:
                 with tf.name_scope('layers_summaries'):
                     for l in range(len(self.layers_size) - 1):
-                        self.__variable_summaries(z[l], "z" + str(l))
-                        self.__variable_summaries(hidden[l], "hidden" + str(l))
+                        self.__variable_summaries(z[l], "z" + str(l), collections=["state"])
+                        self.__variable_summaries(hidden[l], "hidden" + str(l), collections=["state"])
 
         return z[-1], tf.reshape(hidden[-1], [1, self.layers_size[-2]])  # Output layer has Identity units.
 
@@ -199,8 +233,10 @@ class ValueFunctionDQN:
                 self.saver.restore(self.session, self.restoration_checkpoint)
                 print("Model restored from checkpoint at {}.".format(self.restoration_checkpoint))
 
-    def predict(self, states, use_old_params=False, saveembedding=False):
+    def predict(self, states, global_step=None, use_old_params=False, saveembedding=False, summaries_to_save=[]):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
+        if global_step is not None:
+            self.global_step = global_step
 
         feed_dict = {self.x: states}
         if use_old_params:
@@ -211,14 +247,25 @@ class ValueFunctionDQN:
         if saveembedding and self.n_embeddings > 0:
             fetches.append([self.save_embedding_op])
 
+        if self.summaries_path is not None and summaries_to_save:
+            if "progress" in summaries_to_save:
+                fetches.append(self.progress_summaries)
+            if "state" in summaries_to_save:
+                fetches.append(self.state_summaries)
+
         q = self.session.run(fetches, feed_dict=feed_dict)
 
         if saveembedding and self.n_embeddings > 0:
             self.increment_next_embedding_op.eval(session=self.session)
 
+        if self.summaries_path is not None and summaries_to_save:
+            for k in range(len(summaries_to_save)):
+                if summaries_to_save[k] in ["progress", "state"]:
+                    self.train_writer.add_summary(q[-k-1], global_step=self.global_step)
+
         return q[0]
 
-    def train(self, states, targets, w=None):
+    def train(self, states, targets, w=None, summaries_to_save=[]):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
 
         feed_dict = {self.x: states, self.train_targets: targets}
@@ -226,14 +273,17 @@ class ValueFunctionDQN:
             feed_dict[self.rho] = np.transpose(np.tile(w, (self.layers_size[-1], 1)))
 
         if self.summaries_path is not None and self.n_train_epochs % 2000 == 0:
-            fetches = [self.loss, self.train_op, self.E, self.merged_summaries]
+            fetches = [self.loss, self.train_op, self.E, self.train_summaries]
         else:
             fetches = [self.loss, self.train_op, self.E]
 
+        if self.summaries_path is not None and "train" in summaries_to_save:
+            fetches.append(self.train_summaries)
+
         values = self.session.run(fetches, feed_dict=feed_dict)
 
-        if self.summaries_path is not None and self.n_train_epochs % 2000 == 0:
-            self.train_writer.add_summary(values[3], global_step=self.n_train_epochs)
+        if self.summaries_path is not None and "train" in summaries_to_save:
+            self.train_writer.add_summary(values[-1], global_step=self.global_step)
 
         if self.checkpoints_dir is not None:
             if self.n_train_epochs > 0 and self.n_train_epochs % self.checkpoint_save_period_epochs == 0:
@@ -273,20 +323,20 @@ class ValueFunctionDQN:
         return self.session.run(fetches)
 
     @staticmethod
-    def __variable_summaries(var, name, histogram=False, scalar_only=False):
+    def __variable_summaries(var, name, histogram=False, scalar_only=False, collections=None):
         """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
         if scalar_only:
-            tf.summary.scalar(name, var)
+            tf.summary.scalar(name, var, collections=collections)
         else:
             mean = tf.reduce_mean(var)
-            tf.summary.scalar(name+'_mean', mean)
+            tf.summary.scalar(name+'_mean', mean, collections=collections)
             with tf.name_scope('stddev'):
                 stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-            tf.summary.scalar(name+'_stddev', stddev)
-            tf.summary.scalar(name+'_max', tf.reduce_max(var))
-            tf.summary.scalar(name+'_min', tf.reduce_min(var))
+            tf.summary.scalar(name+'_stddev', stddev, collections=collections)
+            tf.summary.scalar(name+'_max', tf.reduce_max(var), collections=collections)
+            tf.summary.scalar(name+'_min', tf.reduce_min(var), collections=collections)
             if histogram:
-                tf.summary.histogram(name+'_histogram', var)
+                tf.summary.histogram(name+'_histogram', var, collections=collections)
 
     def update_old_params(self):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
