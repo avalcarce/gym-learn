@@ -305,11 +305,13 @@ class ExperimentsManager:
         config_file = open(os.path.join(config_file_dir, "config.txt"), "w")
 
         layers_size = self.__build_layers_size_str(state_dim, n_actions)
-        exp_conf_str = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n"
+        exp_conf_str = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n"
         config_file.write(exp_conf_str.format(self.env_name, self.exps_conf_str[:14], layers_size,
                                               self.target_params_update_period_steps,
                                               self.discount, self.decay_eps, self.eps_min, self.learning_rate,
-                                              "TRUE" if self.decay_lr else "FALSE", self.max_step,
+                                              "TRUE" if self.decay_lr else "FALSE",
+                                              str(self.learning_rate_end) if self.decay_lr else "N.A.",
+                                              self.max_step,
                                               "TRUE" if self.double_dqn else "FALSE", self.replay_memory_max_size,
                                               self.batch_size, n_exps, n_ep, self.replay_period_steps,
                                               stop_training_min_avg_rwd, self.min_avg_rwd,
@@ -461,7 +463,7 @@ class ExperimentsManager:
             else:
                 self.agent = agent
 
-            self.run_experiment(env, n_ep, stop_training_min_avg_rwd, n_min_training_episodes)   # This is where the action happens
+            self.run_experiment(env, n_ep, stop_training_min_avg_rwd, n_min_training_episodes)   # Action happens here
 
             if agent is None:
                 value_function.close_summary_file()
