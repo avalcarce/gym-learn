@@ -24,7 +24,9 @@ if platform == "linux" or platform == "linux2":
 
 class ExperimentsManager:
     def __init__(self, env_name, agent_value_function_hidden_layers_size, results_dir_prefix=None, summaries_path=None,
-                 figures_dir=None, discount=0.99, decay_eps=0.995, eps_min=0.0001, learning_rate=1E-4, decay_lr=False,
+                 figures_dir=None, discount=0.99, decay_eps=0.995, eps_min=0.0001, epsilon_reheat=False,
+                 conditional_epsilon_reheat=False,
+                 learning_rate=1E-4, decay_lr=False,
                  learning_rate_end=None, max_step=10000, replay_memory_max_size=100000, ep_verbose=False,
                  exp_verbose=True, batch_size=64, upload_last_exp=False, double_dqn=False,
                  target_params_update_period_steps=1, gym_api_key="", gym_algorithm_id=None, checkpoints_dir='ChkPts',
@@ -42,10 +44,13 @@ class ExperimentsManager:
         self.discount = discount
         self.decay_eps = decay_eps
         self.eps_min = eps_min
+        self.epsilon_reheat = epsilon_reheat
+        self.conditional_epsilon_reheat = conditional_epsilon_reheat
         self.learning_rate = learning_rate
         self.decay_lr = decay_lr
         self.learning_rate_end = learning_rate_end
         self.max_step = max_step
+        self.prob_sample_state = min([1, 2000 / (self.max_step * 1000)])  # Sample 2000 summaries of the current state
         self.n_ep = None
         self.replay_period_steps = replay_period_steps
         self.replay_memory_max_size = replay_memory_max_size
@@ -64,6 +69,7 @@ class ExperimentsManager:
         self.kpis_dir = kpis_dir
         self.embeddings_metadata_file = None
         self.sprite_path = None
+        self.performance_evaluation_mode = False
 
         # Prioritized Experience Replay parameters. See https://arxiv.org/pdf/1511.05952.pdf
         self.per_proportional_prioritization = per_proportional_prioritization  # Flavour of Prioritized Experience Rep.
@@ -153,7 +159,7 @@ class ExperimentsManager:
         self.agent.state = env.reset()
         done = False
         self.agent.total_reward = 0
-        loss_v = 0
+        loss_v = np.nan
 
         for self.step in range(self.max_step):
             if self.render_environment and self.step % 10 == 0:
@@ -167,7 +173,7 @@ class ExperimentsManager:
                 break
 
             summaries_to_save = []
-            if (self.global_step + 1) % self.max_step == 0:
+            if (self.global_step + 1) % 200*self.max_step == 0:
                 summaries_to_save.append("progress")
             if np.random.uniform() <= self.prob_sample_state:
                 summaries_to_save.append("state")
@@ -193,7 +199,7 @@ class ExperimentsManager:
             if save_embedding:
                 self.embeddings_metadata_file.write("{:2.6f}\n".format(self.agent.current_value))
             self.global_step += 1
-        self.agent.value_func.update_summarizables(self.agent.total_reward, self.agent.eps)
+        self.agent.value_func.update_summarizables(self.agent.total_reward, self.agent.eps, self.agent.current_value)
         self.episode_duration_s[self.exp, self.ep] = time.time() - t  # Time elapsed during this episode
         return loss_v, self.agent.total_reward
 
@@ -210,13 +216,15 @@ class ExperimentsManager:
 
     def __maybe_stop_training(self, stop_training_min_avg_rwd, n_min_training_episodes, train):
         if stop_training_min_avg_rwd is not None:
-            if train and self.ep >= n_min_training_episodes and self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
+            if train and self.ep >= n_min_training_episodes and \
+                            self.Avg_Rwd_per_ep[self.exp, self.ep] >= stop_training_min_avg_rwd:
                 train = False
                 self.agent.explore = False
                 print("Minimum average reward reached. Stop training and exploration.")
         return train
 
-    def run_experiment(self, env, n_ep, stop_training_min_avg_rwd=None, n_min_training_episodes=100):
+    def run_experiment(self, env, n_ep, stop_training_min_avg_rwd=None, n_min_training_episodes=100,
+                       print_mean_episode_reward=False):
         self.n_ep = n_ep
         self.global_step = 0
         self.prob_sample_state = min([1, 2000 / (self.max_step * n_ep)])  # Sample 2000 summaries of the current state
@@ -234,14 +242,14 @@ class ExperimentsManager:
             last_rwds = self.Rwd_per_ep_v[self.exp, np.maximum(self.ep - (self.n_avg_ep - 1), 0):self.ep+1]
             last_losses = self.Loss_per_ep_v[self.exp, np.maximum(self.ep - (self.n_avg_ep - 1), 0):self.ep+1]
             self.Avg_Rwd_per_ep[self.exp, self.ep] = np.mean(last_rwds)
-            self.Avg_Loss_per_ep[self.exp, self.ep] = np.mean(last_losses)
+            self.Avg_Loss_per_ep[self.exp, self.ep] = np.nanmean(last_losses)
             self.Agent_Epsilon_per_ep[self.exp, self.ep] = self.agent.eps
-
-            train = self.__maybe_stop_training(stop_training_min_avg_rwd, n_min_training_episodes, train)
 
             if self.Avg_Rwd_per_ep[self.exp, self.ep] >= self.min_avg_rwd:
                 self.n_eps_to_reach_min_avg_rwd[self.exp] = np.minimum(self.ep,
                                                                        self.n_eps_to_reach_min_avg_rwd[self.exp])
+            train = self.__maybe_evaluate_performance_and_reheat(stop_training_min_avg_rwd, n_min_training_episodes,
+                                                                 train)
 
             if self.agent.eps > self.eps_min:
                 self.agent.eps *= self.decay_eps
@@ -257,6 +265,56 @@ class ExperimentsManager:
                                                   os.path.basename(self.embeddings_metadata_file.name),
                                                   self.sprite_path, self.embedding_thumbnail_w,
                                                   self.embedding_thumbnail_h)
+        if print_mean_episode_reward:
+            mean_reward = np.mean(self.Rwd_per_ep_v[self.exp, :])
+            print("Average reward over all episodes: {}.".format(mean_reward))
+
+    def __maybe_evaluate_performance_and_reheat(self, stop_training_min_avg_rwd, n_min_training_episodes, train):
+        if not self.performance_evaluation_mode:
+            if self.epsilon_reheat:
+                if self.agent.eps <= self.eps_min:
+                    if self.conditional_epsilon_reheat:
+                        if self.Avg_Rwd_per_ep[self.exp, self.ep] < self.min_avg_rwd:
+                            ep0 = np.maximum(self.ep - (self.n_avg_ep - 1), 0)
+                            last_avg_losses = self.Avg_Loss_per_ep[self.exp, ep0:self.ep + 1]
+                            if np.all(last_avg_losses < pow(self.min_avg_rwd * 0.2, 2)):  # If loss < 20% of target Rwd
+                                train = False
+                                self.__enable_performance_evaluation_mode()
+                                print("Loss is low enough. Stopping training and exploration to evaluate performance.")
+                    else:  # Unconditional epsilon reheat
+                        self.__reheat_exploration()
+            else:
+                train = self.__maybe_stop_training(stop_training_min_avg_rwd, n_min_training_episodes, train)
+        else:  # If in performance evaluation mode
+            train = self.__evaluate_performance(train)
+        return train
+
+    def __enable_performance_evaluation_mode(self):
+        self.agent.explore = False
+        self.performance_evaluation_mode = True
+        self.performance_evaluation_ep0 = self.ep
+
+    def __evaluate_performance(self, train):
+        last_perf_rwds = self.Rwd_per_ep_v[self.exp, self.performance_evaluation_ep0:self.ep + 1]
+        self.Avg_Rwd_per_ep[self.exp, self.ep] = np.mean(last_perf_rwds)  # Overwrite Avg Rwd with perf Rwd
+        n_perf_eps = self.ep - self.performance_evaluation_ep0
+        if n_perf_eps > 500:
+            last_perf_avg_rwds = self.Avg_Rwd_per_ep[self.exp, self.ep - (n_perf_eps // 4):self.ep + 1]
+            reward_max = np.max(last_perf_avg_rwds)
+            reward_min = np.min(last_perf_avg_rwds)
+            if reward_max - reward_min < self.Avg_Rwd_per_ep[self.exp, self.ep] / 20:  # Perf. eval. complete
+                print("The average reward is {}.".format(self.Avg_Rwd_per_ep[self.exp, self.ep]))
+                if self.epsilon_reheat and self.Avg_Rwd_per_ep[self.exp, self.ep] < self.min_avg_rwd:
+                    self.__reheat_exploration()
+                print("Resuming training and exploration.")
+                train = True
+                self.agent.explore = True
+                self.performance_evaluation_mode = False
+        return train
+
+    def __reheat_exploration(self):
+        self.agent.eps = 1.0
+        print("Reheating exploration.")
 
     def __create_gym_stats_directory(self, env):
         if self.results_dir_prefix is None:
@@ -304,19 +362,27 @@ class ExperimentsManager:
 
         config_file = open(os.path.join(config_file_dir, "config.txt"), "w")
 
+        rest_chkpt_folder = "N.K."
+        rest_chkpt_file = "N.K."
+        if self.restoration_checkpoint is not None:
+            head, rest_chkpt_file = os.path.split(self.restoration_checkpoint)
+            rest_chkpt_folder = os.path.basename(head)
+
         layers_size = self.__build_layers_size_str(state_dim, n_actions)
-        exp_conf_str = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n"
+        exp_conf_str = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n"
         config_file.write(exp_conf_str.format(self.env_name, self.exps_conf_str[:14], layers_size,
                                               self.target_params_update_period_steps,
                                               self.discount, self.decay_eps, self.eps_min, self.learning_rate,
                                               "TRUE" if self.decay_lr else "FALSE",
                                               str(self.learning_rate_end) if self.decay_lr else "N.A.",
+                                              "TRUE" if self.epsilon_reheat else "FALSE",
                                               self.max_step,
                                               "TRUE" if self.double_dqn else "FALSE", self.replay_memory_max_size,
                                               self.batch_size, n_exps, n_ep, self.replay_period_steps,
                                               stop_training_min_avg_rwd, self.min_avg_rwd,
                                               self.per_proportional_prioritization, self.per_apply_importance_sampling,
-                                              self.per_alpha, self.per_beta0))
+                                              self.per_alpha, self.per_beta0,
+                                              rest_chkpt_folder, rest_chkpt_file))
         config_file.close()
 
     def __create_figures_directory(self):
@@ -397,7 +463,7 @@ class ExperimentsManager:
                                       self.embeddings_sprite_n_rows * self.embedding_thumbnail_w, 3), dtype=np.uint8)
 
     def run_experiments(self, n_exps, n_ep, stop_training_min_avg_rwd=None, plot_results=True, figures_format=None,
-                        agent=None, n_embeddings=0, n_min_training_episodes=100):
+                        agent=None, n_embeddings=0, n_min_training_episodes=100, print_mean_episode_reward=False):
         self.Rwd_per_ep_v = np.zeros((n_exps, n_ep))
         self.Loss_per_ep_v = np.zeros((n_exps, n_ep))
         self.Avg_Rwd_per_ep = np.zeros((n_exps, n_ep))
@@ -448,10 +514,10 @@ class ExperimentsManager:
                                                   checkpoint_save_period_epochs=ckpt_sv_period_epochs,
                                                   apply_wis=self.per_apply_importance_sampling,
                                                   restoration_checkpoint=self.restoration_checkpoint,
-                                                  n_embeddings=n_embeddings, epsilon0=0.9)
+                                                  n_embeddings=n_embeddings, epsilon0=1.0)
                 self.__create_embeddings_metadata_file(n_embeddings > 0, "_{}".format(value_function.scope))
 
-                self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=0.9,
+                self.agent = AgentEpsGreedy(n_actions=n_actions, value_function_model=value_function, eps=1.0,
                                             per_proportional_prioritization=self.per_proportional_prioritization,
                                             per_apply_importance_sampling=self.per_apply_importance_sampling,
                                             per_alpha=self.per_alpha, per_beta0=self.per_beta0)
@@ -463,7 +529,8 @@ class ExperimentsManager:
             else:
                 self.agent = agent
 
-            self.run_experiment(env, n_ep, stop_training_min_avg_rwd, n_min_training_episodes)   # Action happens here
+            self.run_experiment(env, n_ep, stop_training_min_avg_rwd, n_min_training_episodes,
+                                print_mean_episode_reward)   # Action happens here
 
             if agent is None:
                 value_function.close_summary_file()

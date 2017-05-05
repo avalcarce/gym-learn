@@ -56,7 +56,7 @@ class ExperienceReplayAgent:
 
 
 class AgentEpsGreedy(ExperienceReplayAgent):
-    def __init__(self, n_actions, value_function_model, eps=1., per_proportional_prioritization=False,
+    def __init__(self, n_actions, value_function_model, eps=1.0, per_proportional_prioritization=False,
                  per_apply_importance_sampling=False, per_alpha=0.2, per_beta0=0.4):
         ExperienceReplayAgent.__init__(self, per_proportional_prioritization=per_proportional_prioritization,
                                        per_apply_importance_sampling=per_apply_importance_sampling, per_alpha=per_alpha,
@@ -101,7 +101,7 @@ class AgentEpsGreedy(ExperienceReplayAgent):
         else:
             a = a_max
 
-        self.current_value = action_values[a]
+        self.current_value = action_values[a_max]
         self.step = global_step
         return a
 

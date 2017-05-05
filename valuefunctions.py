@@ -137,6 +137,7 @@ class ValueFunctionDQN:
                     self.__variable_summaries(tf.squeeze(tf.slice(self.x, [0, i], [1, 1])),
                                               "observation_"+str(i), scalar_only=True, collections=['state'])
                 self.__variable_summaries(self.epsilon, "epsilon", scalar_only=True, collections=['progress'])
+                self.__variable_summaries(self.v_value, "v_value", scalar_only=True, collections=['progress'])
                 self.__variable_summaries(self.learning_rate, "learning_rate", scalar_only=True,
                                           collections=['progress'])
 
@@ -161,10 +162,13 @@ class ValueFunctionDQN:
         # Properties to be saved as summaries for later Tensorboard visualization
         self.reward_ph = tf.placeholder(tf.float32, name="reward_placeholder")
         self.epsilon_ph = tf.placeholder(tf.float32, name="epsilon_placeholder")
+        self.v_value_ph = tf.placeholder(tf.float32, name="v_value_placeholder")
         self.reward = tf.Variable(0.0, name="reward")  # Current reward
         self.epsilon = tf.Variable(epsilon0, name="epsilon")  # Current epsilon, as per Epsilon-greedy policy
+        self.v_value = tf.Variable(epsilon0, name="v_value")  # Current value V of the value function
         self.reward_update_op = self.reward.assign(self.reward_ph)
         self.epsilon_update_op = self.epsilon.assign(self.epsilon_ph)
+        self.v_value_update_op = self.v_value.assign(self.v_value_ph)
 
     def __define_loss(self, train_batch_size, n_actions, huber_loss=False):
         if huber_loss:
@@ -359,11 +363,11 @@ class ValueFunctionDQN:
         if self.summaries_path is not None:
             self.train_writer.close()
 
-    def update_summarizables(self, reward, epsilon):
+    def update_summarizables(self, reward, epsilon, v_value):
         self.__init_tf_session()  # Make sure the Tensorflow session exists
 
-        feed_dict = {self.reward_ph: reward, self.epsilon_ph: epsilon}
-        fetches = [self.reward_update_op, self.epsilon_update_op]
+        feed_dict = {self.reward_ph: reward, self.epsilon_ph: epsilon, self.v_value_ph: v_value}
+        fetches = [self.reward_update_op, self.epsilon_update_op, self.v_value_update_op]
 
         self.session.run(fetches, feed_dict=feed_dict)
 
